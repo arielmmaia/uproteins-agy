@@ -17,7 +17,7 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-from ..postprocess import PostPercolator, ExtendedInformation, PercolatorProcessing, AllSub, TSVConverter, ResultsWrapper
+from ..postprocess import PostPercolator, ExtendedInformation, PercolatorProcessing, TSVConverter, ResultsWrapper
 from ..sequtils.orflib import AltCodons
 from ..upstream import SDInspection
 from ..sequtils.__helpers import FiletypeError

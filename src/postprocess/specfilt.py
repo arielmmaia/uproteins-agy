@@ -24,7 +24,7 @@ import numpy as np
 
 from ..sequtils.postsearch import SequenceFinder, LinkData, TSVChunks
 from ..sequtils.utilities import PercolatorConverter
-from ..sequtils import StringTieGFF, GenomeCoordinates, RefSeqGFF, GenomeCoordinatesRNA, PercolatorUTP, StillCounting, Enrichment
+from ..sequtils import StringTieGFF, GenomeCoordinates, RefSeqGFF, GenomeCoordinatesRNA, PercolatorUTP
 
 
 class PostPercolator(object):
