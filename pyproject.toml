@@ -38,6 +38,10 @@ test = [
 [tool.setuptools.packages.find]
 include = ["src*"]
 
+[tool.setuptools.package-data]
+"src.model" = ["*.json", "*.pkl"]
+"src.database" = ["*.txt"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
