@@ -18,105 +18,132 @@
 
 
 import sqlite3
-import os
-
-from Bio import SeqIO
-from .orflib import ORFCollection
-from .conversion import *
-from .frame_translation import *
+import typing as t
 
 
 class DatabaseGenerator(object):
-    """ Generates a database to manage all ORFs predicted using Genome or TranscriptomeTranslator classes. It can
-    create either a SQL .db or a .xlsl to store the ORFs. the 'name' argument will determine the name of the file to be
-    created. 'db_type' is either 'sql' or a 'df'. """
-    def __init__(self, name="database", db_type='sql'):
-        self.db = None
-        self.__check_db_type(db_type, name)
+    """Generates a SQLite or FASTA store for predicted ORFs."""
 
-    def __check_db_type(self, db_type, name):
+    def __init__(self, name: str = "database", db_type: str = 'sql', reset: bool = True):
+        self.db = None
+        self.__check_db_type(db_type, name, reset=reset)
+
+    def __check_db_type(self, db_type: str, name: str, reset: bool = True):
         if db_type == 'sql':
-            self.db = SQLDatabase(name)
+            self.db = SQLDatabase(name, reset=reset)
         elif db_type == 'fasta':
-            pass
+            self.db = FastaDatabase()
         else:
-            print("Inform a valid database type. It must be either 'sql',  'fasta' or 'df' (in case of a pandas "
-                  "Data Frame. ")
+            raise ValueError(
+                f"Invalid database type '{db_type}'. Expected 'sql' or 'fasta'."
+            )
 
     def add_orfs(self, orfs):
-        """ Adds ORFs to the database. Provide the ORF object for this function. """
+        """Adds ORFs to the database."""
         self.db.add_orfs(orfs)
         return self
 
     def retrieve(self):
-        data = self.db.retrieve()
-        return data
+        return self.db.retrieve()
 
-    def to_fasta(self, filename="db_orfs.fasta", identifier='g'):
-        """ Writes and entries and sequences inside the database to a fasta file. """
+    def to_fasta(self, filename: str = "db_orfs.fasta", identifier: str = 'g'):
+        """Writes entries and sequences inside the database to a FASTA file."""
         data = self.retrieve()
-        to_write = [f">{identifier}{orf[1]}_{orf[4]}-{orf[5]}_{orf[6]}\n{orf[2]}\n" for orf in data]
+        to_write = [
+            f">{identifier}{orf[1]}_{orf[4]}-{orf[5]}_{orf[6]}\n{orf[2]}\n"
+            for orf in data
+        ]
         with open(filename, 'w') as fa:
             fa.writelines(to_write)
 
 
 class FastaDatabase(object):
     def __init__(self):
-        pass
+        self._rows: list[tuple] = []
+
+    def add_orfs(self, orfs):
+        start_id = len(self._rows) + 1
+        for offset, orf in enumerate(orfs):
+            seq_str = str(orf.seq)
+            self._rows.append((
+                start_id + offset,
+                str(orf.name),
+                seq_str,
+                len(seq_str),
+                int(orf.start),
+                int(orf.end),
+                str(orf.strand or ""),
+            ))
+
+    def retrieve(self):
+        return list(self._rows)
 
 
 class SQLDatabase(object):
-    def __init__(self, name):
+    def __init__(self, name: str, reset: bool = True):
         self.name = f'{name}.db'
-        self.__create_database()
+        self.__create_database(reset=reset)
 
-    def __connect(self):
-        conn = sqlite3.connect(self.name)
-        return conn
+    def __connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(self.name)
 
-    def __create_database(self):
+    def __create_database(self, reset: bool = True):
         conn = self.__connect()
         try:
-            conn.execute('''CREATE TABLE ORFOME(ID INT PRIMARY KEY     NOT NULL,
-                                                NAME    TEXT    NOT NULL,
-                                                SEQ     TEXT    NOT NULL,
-                                                LENGTH  INT     NOT NULL,
-                                                START   INT     NOT NULL,
-                                                END     INT     NOT NULL,
-                                                STRAND  TEXT    NOT NULL);''')
-        except:
-            pass
-
+            with conn:
+                if reset:
+                    conn.execute("DROP TABLE IF EXISTS ORFOME;")
+                conn.execute(
+                    """CREATE TABLE IF NOT EXISTS ORFOME(
+                        ID     INT PRIMARY KEY NOT NULL,
+                        NAME   TEXT            NOT NULL,
+                        SEQ    TEXT            NOT NULL,
+                        LENGTH INT             NOT NULL,
+                        START  INT             NOT NULL,
+                        END    INT             NOT NULL,
+                        STRAND TEXT            NOT NULL
+                    );"""
+                )
+        finally:
+            conn.close()
         return self
 
-    def add_orfs(self, orfs):
-        """ This method is only to be called within DatabaseGenerator class. """
+    def add_orfs(self, orfs: t.Iterable):
+        """Insert ORFs in a single parameterized transaction."""
+        conn = self.__connect()
         try:
-            conn = self.__connect()
-            cursor = conn.cursor()
-            i = 1
-            for orf in orfs:
-                insert_query = f"""INSERT INTO ORFOME(ID, NAME, SEQ, LENGTH, START, END, STRAND)
-                VALUES({i}, '{orf.name}', '{orf.seq}', {orf.__len__()}, {orf.start}, {orf.end}, '{orf.strand}')"""
-                i += 1
-                cursor.execute(insert_query)
-            conn.commit()
-            cursor.close()
-        except sqlite3.Error as error:
-            print("Failed to insert entries into db. Error: ", error)
+            with conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COALESCE(MAX(ID), 0) FROM ORFOME;")
+                next_id = int(cursor.fetchone()[0]) + 1
+                rows = [
+                    (
+                        next_id + offset,
+                        str(orf.name),
+                        str(orf.seq),
+                        len(orf),
+                        int(orf.start),
+                        int(orf.end),
+                        str(orf.strand or ""),
+                    )
+                    for offset, orf in enumerate(orfs)
+                ]
+                if rows:
+                    cursor.executemany(
+                        """INSERT INTO ORFOME(ID, NAME, SEQ, LENGTH, START, END, STRAND)
+                           VALUES (?, ?, ?, ?, ?, ?, ?);""",
+                        rows,
+                    )
         finally:
-            if conn:
-                conn.close()
+            conn.close()
 
     def retrieve(self):
         conn = self.__connect()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM ORFOME")
-        rows = cursor.fetchall()
-        return rows
-
-# seq = "ATGAGATGCGGC"
-# tr = translate(seq)
-# print(tr)
-
-# genome_database = DatabaseGenerator(name="genome", db_type='sql')
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT ID, NAME, SEQ, LENGTH, START, END, STRAND FROM ORFOME ORDER BY ID;"
+            )
+            return cursor.fetchall()
+        finally:
+            conn.close()

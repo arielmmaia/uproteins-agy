@@ -18,15 +18,36 @@
 
 
 from functools import lru_cache
+import itertools
 import typing as t
 
 from Bio.Data import CodonTable
+
+from .complement import complement_dna, normalize_dna
 
 
 _REASSIGNED_STOP_FALLBACK = {
     "TGA": "W",  # NCBI Table 4 (Mycoplasma/Spiroplasma/Entomoplasmatales)
     "TAA": "Q",  # Natural ochre reassignment fallback
     "TAG": "Q",  # Natural amber reassignment fallback
+}
+
+_IUPAC_BASES: dict[str, str] = {
+    "A": "A",
+    "C": "C",
+    "G": "G",
+    "T": "T",
+    "R": "AG",
+    "Y": "CT",
+    "S": "GC",
+    "W": "AT",
+    "K": "GT",
+    "M": "AC",
+    "B": "CGT",
+    "D": "AGT",
+    "H": "ACT",
+    "V": "ACG",
+    "N": "ACGT",
 }
 
 
@@ -50,6 +71,30 @@ def build_codon_table(
     return table
 
 
+@lru_cache(maxsize=4096)
+def resolve_codon(
+    codon: str,
+    stops: t.Tuple[str, ...] = ("TAA", "TAG", "TGA"),
+    genetic_code: int = 11,
+) -> str:
+    """Translate a 3-letter IUPAC DNA codon deterministically without raising KeyError."""
+    table = build_codon_table(stops, genetic_code)
+    if codon in table:
+        return table[codon]
+
+    expansions = [
+        _IUPAC_BASES.get(base, "ACGT")
+        for base in codon
+    ]
+    aas = {
+        table["".join(triplet)]
+        for triplet in itertools.product(*expansions)
+    }
+    if len(aas) == 1:
+        return next(iter(aas))
+    return "X"
+
+
 class Translator(object):
     def __init__(
         self,
@@ -68,20 +113,18 @@ class Translator(object):
     def translate(self, initiator: bool = True) -> str:
         table = build_codon_table(self.stops, self.genetic_code)
         stop_set = set(self.stops)
-        seq = self.genome.upper().replace("U", "T")
+        seq = normalize_dna(self.genome)
         chars: list[str] = []
         for i in range(0, len(seq), 3):
             codon = seq[i : i + 3]
             if len(codon) == 3:
                 if i == 0 and initiator and codon not in stop_set:
                     chars.append("M")
-                else:
+                elif codon in table:
                     chars.append(table[codon])
+                else:
+                    chars.append(resolve_codon(codon, self.stops, self.genetic_code))
         return "".join(chars)
 
     def complement(self) -> str:
-        nuc_table = {
-            'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G'
-        }
-        return "".join(nuc_table[i] for i in self.genome)
-
+        return complement_dna(self.genome)

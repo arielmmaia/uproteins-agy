@@ -17,6 +17,30 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
+import re
+
+
+_IUPAC_SRC = "ACGTRYKMSWBDHVN-"
+_IUPAC_DST = "TGCAYRMKSWVHDBN-"
+_IUPAC_TRANS = str.maketrans(_IUPAC_SRC, _IUPAC_DST)
+_NON_IUPAC_RE = re.compile(r"[^ACGTRYKMSWBDHVN\-]")
+
+
+def normalize_dna(seq: str) -> str:
+    """Normalize arbitrary DNA/RNA string (upper/lower, U->T, unknown->N)."""
+    cleaned = str(seq).upper().replace("U", "T")
+    return _NON_IUPAC_RE.sub("N", cleaned)
+
+
+def complement_dna(seq: str) -> str:
+    """Return the uppercase IUPAC DNA complement of *seq* without raising KeyError."""
+    return normalize_dna(seq).translate(_IUPAC_TRANS)
+
+
+def reverse_complement_dna(seq: str) -> str:
+    """Return the uppercase IUPAC DNA reverse-complement of *seq*."""
+    return complement_dna(seq)[::-1]
+
 
 class StrandConverter(object):
     def __init__(self, sequence):
@@ -24,17 +48,13 @@ class StrandConverter(object):
         self.complementary = []
 
     def complement(self):
-        nuc_table = {
-            'A': 'T',  'T': 'A', 'G': 'C', 'C': 'G'
-        }
+        self.complementary = []
         for chromosome in self.sequence:
-            nuc_seq = ""
-            for nuc in chromosome:
-                nuc_seq += nuc_table[nuc]
-            if "*" not in nuc_seq:
-                self.complementary.append(nuc_seq)
+            chrom_str = str(chromosome)
+            if "*" in chrom_str:
+                continue
+            self.complementary.append(complement_dna(chrom_str))
         return self
 
     def reverse(self):
-        rev = [i[::-1] for i in self.complementary]
-        return rev
+        return [seq[::-1] for seq in self.complementary]

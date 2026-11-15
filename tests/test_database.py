@@ -183,3 +183,69 @@ def test_circular_oric_wrapping_forward_and_reverse_without_duplicates(tmp_path:
     tx_orfs = list(tx.parse_frames(starts=["ATG"], stops=["TAA", "TAG", "TGA"], seqtype="aa"))
     assert all(o.seq != "MPPFKR" for o in tx_orfs)
 
+
+@pytest.mark.database
+def test_iupac_ambiguous_and_lowercase_sequences_translate_without_keyerror(tmp_path: pathlib.Path):
+    """Regression test (Issue #13): lowercase soft-masked bases and IUPAC ambiguity symbols
+    must complement and translate deterministically without KeyError."""
+    from src.sequtils.conversion.complement import StrandConverter
+
+    # Check full IUPAC complementation + lowercase handling
+    sc = StrandConverter(["acgtRYKMSWBDHVN"])
+    rev = sc.complement().reverse()[0]
+    assert rev == "NBDHVWSKMRYACGT"
+
+    # Degenerate codons:
+    # atg -> M, ggn -> G, ctn -> L, gtn -> V, ath -> I, aar -> K, nnn -> X, gan -> X, taa -> stop
+    fa = tmp_path / "iupac_softmasked.fasta"
+    fa.write_text(">draft_contig_gap\nnnnnnatgggnctngtnathaarNNNgantaannnnn\n")
+
+    gt = GenomeTranslator(
+        sequence=str(fa),
+        form="fasta",
+        minsize=18,
+        maxsize=300,
+        circular=False,
+    )
+    orfs = list(gt.parse_frames(starts=["ATG"], stops=["TAA", "TAG", "TGA"], seqtype="aa"))
+    fwd_seqs = [o.seq for o in orfs if o.strand == "forward"]
+    assert "MGLVIKXX" in fwd_seqs
+
+
+@pytest.mark.database
+def test_sqlite_database_resets_stale_orfome_and_parameterizes_sql(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Regression test (Issue #13): re-running DatabaseGenerator in an existing directory
+    must drop stale ORFOME rows instead of silently keeping old ORFs, and must safely
+    parameterize names containing quotes/SQL metacharacters."""
+    from src.sequtils.database import DatabaseGenerator
+    from src.sequtils.orflib import ORF
+
+    monkeypatch.chdir(tmp_path)
+
+    # First run writes a stale ORF
+    db1 = DatabaseGenerator(name="genome", db_type="sql")
+    db1.add_orfs([
+        ORF(name="ORF_STALE_1", seq="MSTALEORF", start=1, end=27, strand="forward")
+    ])
+    db1.to_fasta("genome_ORFs.fasta", identifier="g")
+    assert "MSTALEORF" in (tmp_path / "genome_ORFs.fasta").read_text()
+
+    # Second run in the same directory with a quote/SQLi payload in ORF name
+    tricky_name = "ORF_O'Reilly'); DROP TABLE ORFOME;--"
+    db2 = DatabaseGenerator(name="genome", db_type="sql")
+    db2.add_orfs([
+        ORF(name=tricky_name, seq="MFRESHORF", start=10, end=36, strand="reverse")
+    ])
+    db2.to_fasta("genome_ORFs.fasta", identifier="g")
+
+    fasta_content = (tmp_path / "genome_ORFs.fasta").read_text()
+    assert "MSTALEORF" not in fasta_content
+    assert "MFRESHORF" in fasta_content
+    rows = db2.retrieve()
+    assert len(rows) == 1
+    assert rows[0][1] == tricky_name
+    assert rows[0][2] == "MFRESHORF"
+
+
