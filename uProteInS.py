@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # Copyright © 2021-2025 Eduardo Vieira de Souza
 # Copyright © 2021-2025 Adriana Canedo
@@ -20,22 +20,7 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-import typing as t
-
-from src import cli, main
-
-
-def uproteins(args: t.Optional[t.Sequence[str]] = None):
-    try:
-        from pyfiglet import Figlet
-        f = Figlet()
-        print(f.renderText('uProteInS'))
-    except ModuleNotFoundError:
-        print('uProteInS')
-
-    parser, subparsers = cli.get_parsers()
-    args_namespace = parser.parse_args(args)
-    main.run_workflow(args_namespace, subparsers[args_namespace.mode])
+from src.main import uproteins
 
 
 if __name__ == "__main__":

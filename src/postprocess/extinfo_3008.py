@@ -122,7 +122,7 @@ class ExtendedInformation(object):
                     # if i == 0:
                     # ndf.insert(3, "Extended ORF", extended)
                     # i += 1
-                    new_df = new_df.append(ndf)
+                    new_df = pd.concat([new_df, ndf], ignore_index=True)
         new_df.insert(3, "Extended ORF", extended)
         new_df.insert(4, "Extended Sequence", ext_seqs)
         new_df.insert(5, "Free Energy", energies)

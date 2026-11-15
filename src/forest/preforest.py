@@ -49,11 +49,11 @@ class PreFiltering(object):
                 i += 1
                 print(i, len(self.pinFiles), end="\r")
                 df = pd.read_csv(f'{self.pinFolder}/{file}', sep='\t')
-                # ndf = pd.DataFrame(columns=df.columns)
-                df = df[df["Proteins"].str.contains('|'.join(self.proteins)).any(level=0)]
-                # for prot in self.proteins:
-                #     prot_df = df[df["Proteins"].str.contains(prot)]
-                #     ndf = ndf.append(prot_df)
+                if self.proteins:
+                    mask = df["Proteins"].fillna("").str.contains('|'.join(self.proteins), na=False)
+                    df = df[mask]
+                else:
+                    df = df.iloc[0:0]
                 df.to_csv(f'{outdir}/filtered_{file}', sep='\t', index=False)
 
 
@@ -68,13 +68,12 @@ class FeatureFishing(object):
         self.__check_testing()
         self.specFiles = self.results["SpecFile"].tolist()
         self.scanNum = self.results["ScanNum"].tolist()
-        # self.specTags = self.__add_spec_tag()  # should be added afterwards to easily identify the predictions
         self.pinFolder = pin_folder
         self.pinFiles = os.listdir(pin_folder)
+        self.dataWithFeatures = pd.DataFrame()
 
     def __check_testing(self):
         if self.testing:
-            # self.results = self.results.head(20)
             ...
 
     def __add_spec_tag(self):
@@ -84,28 +83,26 @@ class FeatureFishing(object):
         return tags
 
     def add_features(self):
-        chunk_size = 10**6
-        i = 0
+        frames = []
+        cols = None
         j = 0
         for file in self.pinFiles:
             print(j, len(self.pinFiles), end='\r')
             if 'fixed' in file and 'pin' in file:
-                # if 'pin' in file:
                 chunk = pd.read_csv(f'{self.pinFolder}/{file}', sep='\t')
+                if cols is None:
+                    cols = chunk.columns
                 chunk = chunk[chunk["ScanNr"].isin(self.scanNum)]
-                # for chunk in pd.read_csv(f'{self.pinFolder}/{file}', sep='\t', chunksize=chunk_size):
-                if i == 0:
-                    self.dataWithFeatures = pd.DataFrame(columns=chunk.columns)
-                    i += 1
                 for spec, scan in zip(self.specFiles, self.scanNum):
-                    self.__filter_by_scan(chunk, spec, scan)
-                # print(j)
+                    df = chunk[(chunk["SpecId"].str.contains(spec[:-5], na=False)) & (chunk["ScanNr"] == scan)]
+                    frames.append(df)
                 j += 1
+        self.dataWithFeatures = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=cols if cols is not None else [])
         return self
 
     def __filter_by_scan(self, chunk, spec, scan):
-        df = chunk[(chunk["SpecId"].str.contains(spec[:-5])) & (chunk["ScanNr"] == scan)]
-        self.dataWithFeatures = self.dataWithFeatures.append(df)
+        df = chunk[(chunk["SpecId"].str.contains(spec[:-5], na=False)) & (chunk["ScanNr"] == scan)]
+        self.dataWithFeatures = pd.concat([self.dataWithFeatures, df], ignore_index=True)
         return self
 
     def save_table(self, output):

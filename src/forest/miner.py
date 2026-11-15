@@ -44,16 +44,17 @@ class SpecMiner(object):
         i = 0
         extended_orfs = []
         extended_seqs = []
+        frames = []
+        cols = None
         for scan, file in zip(self.scanNums, self.fixedFileNames):
             for file in files:
                 full_df = pd.read_csv(f'{self.pinFolder}/{file}', sep='\t')
-                if i == 0:
-                    df = pd.DataFrame(columns=full_df.columns)
-                    # df.columns = full_df.columns
-                intersection = full_df[(full_df["ScanNr"] == scan) & (full_df["SpecId"].str.contains(file))]
-                df = df.append(intersection)
+                if cols is None:
+                    cols = full_df.columns
+                intersection = full_df[(full_df["ScanNr"] == scan) & (full_df["SpecId"].str.contains(file, na=False))]
+                frames.append(intersection)
                 scans = intersection["ScanNr"].tolist()
-                for j in range(len(scans)):
+                for _ in range(len(scans)):
                     extended_orfs.append(self.extendedORFs[i])
                     extended_seqs.append(self.extendedSequences[i])
             print(i)
@@ -62,6 +63,7 @@ class SpecMiner(object):
             if i == 5:
                 break
 
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=cols if cols is not None else [])
         df.insert(3, "Extended ORF", extended_orfs)
         df.insert(4, "Extended Sequence", extended_seqs)
         df.to_csv(output, sep='\t', index=False)
@@ -86,10 +88,11 @@ class MinePredicted(object):
                 if file[:-5] in self.highConfidenceFiles[i] and self.highConfidenceScans[i] == scan:
                     high_scans.append(scan)
                     high_files.append(file)
-        df = pd.DataFrame(columns=self.df.columns)
-        for file, scan in zip(high_files, high_scans):
-            ndf = self.df[(self.df["SpecFile"] == file) & (self.df["ScanNum"] == scan)]
-            df = df.append(ndf)
+        frames = [
+            self.df[(self.df["SpecFile"] == file) & (self.df["ScanNum"] == scan)]
+            for file, scan in zip(high_files, high_scans)
+        ]
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=self.df.columns)
         df = df.drop_duplicates()
         df.to_csv(output, sep='\t', index=False)
 
@@ -107,12 +110,6 @@ class MinePredicted(object):
                 hcs[file] = f'{scan}'
         return hcs
 
-# miner = SpecMiner(results='Genome/genome_results_04.txt')
-# miner.mine_spectra('teste_miner.txt')
-
-# miner = MinePredicted(predicted='../for_predicting/genome_predicted.txt', results='Genome/genome_results_04.txt')
-# miner.filter('../predicted/genome_04_predicted.txt')
-
 
 class SpectrumMiner(object):
     def __init__(self, results, predicted, testing=False):
@@ -129,14 +126,11 @@ class SpectrumMiner(object):
         self.highConfidenceFiles = self.predicted["SpecId"].tolist()
         self.__rename_predicted()
         self.fixedPredictedFiles = self.predicted["RenamedFiles"].tolist()
-        # print(self.fixedPredictedFiles)
         self.HCs = self.__get_hc()
-        # self.results = self.results[self.results["RenamedFile"].isin(self.HCs)]
 
     def __check_testing(self):
         if self.testing:
             ...
-            # self.results = self.results.head(20)
 
     def __get_hc(self):
         hcs = {}  # spectra predicted to have high confidence by the ML model
@@ -157,15 +151,13 @@ class SpectrumMiner(object):
         for file, scan in zip(spec_files, self.unfilteredScans):
             renamed.append(file[:-5])
         self.results.insert(0, "RenamedFiles", renamed)
-        # self.results.insert(3, "FixedScans", fixed_scan)
 
     def filter_results(self, output):
-        df = pd.DataFrame(columns=self.results.columns)
-        i = 0
-        for hc in self.HCs:
-            i += 1
-            df = df.append(self.results[(self.results["ScanNum"].astype('int64').isin(self.HCs[hc])) & (self.results["RenamedFiles"] == hc)])
-            # print(i, len(self.HCs))
+        frames = [
+            self.results[(self.results["ScanNum"].astype('int64').isin(self.HCs[hc])) & (self.results["RenamedFiles"] == hc)]
+            for hc in self.HCs
+        ]
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=self.results.columns)
         df = df.drop_duplicates()
         df.to_csv(f'{output}', sep='\t', index=False)
 

@@ -1,0 +1,4 @@
+# StringTie synthetic output
+# StringTie version 2.2.1
+NC_000962.3	StringTie	transcript	100	200	1000	+	.	gene_id "uproteins.1"; transcript_id "uproteins.1.1";
+NC_000962.3	StringTie	exon	100	200	1000	+	.	gene_id "uproteins.1"; transcript_id "uproteins.1.1"; exon_number "1";

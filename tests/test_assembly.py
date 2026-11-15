@@ -19,6 +19,7 @@
 
 
 import pathlib
+import shutil
 from importlib import resources as rsrc
 
 import pandas as pd
@@ -27,6 +28,10 @@ from Bio import SeqIO
 
 from src import uproteins, cli, assembly  # noqa: F401
 from tests import resources
+
+
+_ASSEMBLY_BINS = ("hisat2", "hisat2-build", "samtools", "stringtie", "gffcompare", "gffread")
+_MISSING_ASSEMBLY_BINS = [b for b in _ASSEMBLY_BINS if shutil.which(b) is None]
 
 
 @pytest.mark.assembly
@@ -58,6 +63,10 @@ def test_read_type(assembly_args, tmp_file):
 
 
 @pytest.mark.assembly
+@pytest.mark.skipif(
+    bool(_MISSING_ASSEMBLY_BINS),
+    reason=f"Requires external assembly binaries on PATH: {', '.join(_MISSING_ASSEMBLY_BINS)}",
+)
 def test_assembly_mode(tmp_path):
     genome = rsrc.files(resources).joinpath("genome.fasta")
     gtf = rsrc.files(resources).joinpath("mtb.gtf")

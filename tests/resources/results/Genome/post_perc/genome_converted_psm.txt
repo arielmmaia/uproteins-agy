@@ -1,0 +1,3 @@
+PSMId	score	q-value	posterior_error_prob	peptide	proteinIds
+run1_SII_1_1_100_2_1	2.5	0.004	0.001	-.MPEPTIDER.K	Genome_gORF_1_15-62_forward
+run1_SII_2_2_101_2_1	3.1	0.002	0.0005	-.MKLLEIR.K	Rv0001_ANNO

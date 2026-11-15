@@ -134,15 +134,8 @@ class Coordinator(object):
         self.UTPs = self.UTPs[self.UTPs["q-value"] != "q-value"]
         # print(self.UTPs)
         # print(self.UTPs)
-        self.UTPs["q-value"] = pd.to_numeric(self.UTPs["q-value"], downcast='float')
-        # print(self.UTPs)
-        # self.UTPs["q-value"] = self.UTPs["q-value"].astype(float)
-        # qvs = self.UTPs["q-value"].tolist()
-        # for i in qvs:
-        #     if type(i) != float:
-        #         print(i)
+        self.UTPs["q-value"] = pd.to_numeric(self.UTPs["q-value"])
         self.UTPs = self.UTPs[self.UTPs["q-value"] <= qvalue]
-        # print(self.UTPs)
         self.proteined = pd.read_csv(proteined, sep='\t')
         self.coordinates = self._get_coordinates()
 
@@ -159,20 +152,22 @@ class Coordinator(object):
         return coordict
 
     def add_information(self, output):
-        # proteins = self.proteined["Protein"].tolist()
-        ndf = pd.DataFrame(columns=self.proteined.columns)
-
+        frames = []
         for protein in self.coordinates:
-            df = self.proteined[self.proteined["Protein"].str.contains(protein)]
+            df = self.proteined[self.proteined["Protein"].str.contains(protein, na=False)].copy()
             proteins = df["Protein"].tolist()
-            new_proteins = []
-            coordinates = []
-            for entry in proteins:
-                new_proteins.append(protein)
-                coordinates.append(self.coordinates[protein])
+            new_proteins = [protein for _ in proteins]
+            coordinates = [self.coordinates[protein] for _ in proteins]
             df.insert(8, "entry", new_proteins)
             df.insert(5, "Genome Coordinates", coordinates)
-            ndf = ndf.append(df)
+            frames.append(df)
+        if frames:
+            ndf = pd.concat(frames, ignore_index=True)
+        else:
+            empty_cols = list(self.proteined.columns)
+            empty_cols.insert(5, "Genome Coordinates")
+            empty_cols.insert(9, "entry")
+            ndf = pd.DataFrame(columns=empty_cols)
         ndf = ndf.drop_duplicates()
         ndf = ndf.drop(columns='Protein')
         ndf = ndf.rename(columns={'entry': 'Protein'})
@@ -196,7 +191,6 @@ class ProteinFDR(object):
     def protein_cutoff(self):
         df = pd.read_csv(self.catProteinFile, sep='\t')
         df = df[df["q-value"] != "q-value"]
-        # df["q-value"] = df["q-value"].astype(float).fillna(1, 1)
         new_q = [float(i) for i in df["q-value"].tolist()]
         df = df.drop(columns="q-value")
         df.insert(3, "q-value", new_q)
@@ -206,14 +200,14 @@ class ProteinFDR(object):
     def apply_to_psm(self):
         """ filters {filetype}_proteined based on proteins present in self.filteredProtein. Must define this attribute
         with self.protein_cutoff() before calling this function. """
-        protein_df = self.filteredProtein[self.filteredProtein["ProteinId"].str.contains('ANNO') == False]
+        protein_df = self.filteredProtein[self.filteredProtein["ProteinId"].str.contains('ANNO', na=False) == False]
         names = protein_df["ProteinId"].tolist()
         results = pd.read_csv(f'{self.percDir}/{self.filetype}_proteined.tsv', sep='\t')
-        filtered_results = pd.DataFrame(columns=results.columns)
-        for i in names:
-            # print(i)
-            df = results[results["Protein"].str.contains(i) == True]
-            filtered_results = filtered_results.append(df)
+        frames = [results[results["Protein"].str.contains(i, na=False) == True] for i in names]
+        if frames:
+            filtered_results = pd.concat(frames, ignore_index=True)
+        else:
+            filtered_results = pd.DataFrame(columns=results.columns)
         filtered_results = filtered_results.drop_duplicates()
         self.ProteinPSMFiltered = f'{self.percDir}/{self.filetype}_psm_protein_filtered.txt'
         filtered_results.to_csv(self.ProteinPSMFiltered, sep='\t', index=False)
@@ -228,23 +222,16 @@ class ProteinFDR(object):
         for prot_list, coord_list in zip(prots_utp, coords_utp):
             splat_prot = prot_list.split(",")
             splat_coords = coord_list.split(",")
-            # if len(splat_prot) > 1:
             for prot, coord in zip(splat_prot, splat_coords):
                 prots.append(prot)
                 coords.append(coord)
-            # else:
-            #     prots.append(splat_prot)
-            #     coords.append(splat_coords)
         return prots, coords
 
     def __rename_orfs(self):
         """ Removes the (...) from ORFs entries inside psm_protein_filtered.txt"""
         df = pd.read_csv(f'{self.percDir}/{self.filetype}_psm_protein_filtered.txt', sep='\t')
         names = df["Protein"].tolist()
-        renamed = []
-        for name in names:
-            # print(name)
-            renamed.append(name.split("(")[0])
+        renamed = [name.split("(")[0] for name in names]
         df = df.drop(columns="Protein")
         df.insert(8, "Protein", renamed)
         return df
@@ -255,21 +242,20 @@ class ProteinFDR(object):
         filtered protein results.
         """
         prots, coords = self.__get_utp_prots_and_coords()
-        renamed_protein_filtered_df = self.__rename_orfs()
-        # df = renamed_protein_filtered_df[renamed_protein_filtered_df["Protein"].isin(prots)] # it's this piece of shit
-        df = renamed_protein_filtered_df
-        filtered_df = pd.DataFrame(columns=df.columns)
-        filtered_df.insert(5, "Genome Coordinates", [])
+        df = self.__rename_orfs()
+        frames = []
         for prot, coord in zip(prots, coords):
-            ndf = df[df["Protein"] == prot]
-            ncoords = []
-            for i in range(len(ndf["Protein"].tolist())):
-                ncoords.append(coord)
+            ndf = df[df["Protein"] == prot].copy()
+            ncoords = [coord for _ in range(len(ndf["Protein"].tolist()))]
             ndf.insert(5, "Genome Coordinates", ncoords)
-            filtered_df = filtered_df.append(ndf)
+            frames.append(ndf)
+        if frames:
+            filtered_df = pd.concat(frames, ignore_index=True)
+        else:
+            filtered_df = pd.DataFrame(columns=df.columns)
+            filtered_df.insert(5, "Genome Coordinates", [])
         filtered_df = filtered_df.drop_duplicates()
         filtered_df.to_csv(f"{self.percDir}/{self.filetype}_results_01.txt", sep='\t', index=False)
-        # print(filtered_df)
         return self
 
     def __read_db(self):
