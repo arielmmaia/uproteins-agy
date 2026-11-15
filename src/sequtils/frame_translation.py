@@ -20,7 +20,7 @@
 from Bio import SeqIO
 
 from .conversion.translate import Translator
-from .conversion import StrandConverter
+from .conversion.complement import StrandConverter, normalize_dna
 from .orflib import ORF, ORFCollection
 from .__helpers import FormatError
 
@@ -52,12 +52,12 @@ class FrameTranslator(object):
             seqs = []
             for record in records:
                 entries.append(record.id)
-                seqs.append(str(record.seq))
+                seqs.append(normalize_dna(str(record.seq)))
             return seqs, entries
         elif self.format == 'list':
             if isinstance(self.sequence, tuple) and len(self.sequence) == 2:
-                return [str(s) for s in self.sequence[0]], list(self.sequence[1])
-            seqs = [str(s) for s in self.sequence]
+                return [normalize_dna(str(s)) for s in self.sequence[0]], list(self.sequence[1])
+            seqs = [normalize_dna(str(s)) for s in self.sequence]
             entries = [f"seq_{idx + 1}" for idx in range(len(seqs))]
             return seqs, entries
         else:
