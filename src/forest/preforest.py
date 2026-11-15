@@ -16,122 +16,201 @@
 # You should have received a copy of the GNU General Public License along with
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
+"""Pre-filtering and exact (run_stem, ScanNr) feature extraction for Spectrum Forest."""
+
+from __future__ import annotations
 
 import os
+import pathlib
+import re
+
 import pandas as pd
+
+from ..utils.psmid import normalize_pin_spec_id
+from .predictor import clean_pin_candidates
+
+_MS_EXT_RE = re.compile(r"\.(?:mzml|mzxml|mgf|mzid|raw)$", re.IGNORECASE)
+_PROT_SPLIT_RE = re.compile(r"[;\t]+|,(?![^()]*\))")
+
+
+def strip_ms_extension(filename: str) -> str:
+    """Strip common MS spectrum/identification extensions without hardcoding 5-char ``.mzML``."""
+    base = os.path.basename(str(filename).strip())
+    stripped = _MS_EXT_RE.sub("", base)
+    if stripped != base:
+        return stripped
+    stem, ext = os.path.splitext(base)
+    return stem if ext else base
+
+
+def _clean_protein_token(raw_token: str) -> str:
+    tok = raw_token.strip()
+    if "(pre" in tok:
+        tok = tok[: tok.rfind("(pre")]
+    return tok.strip()
 
 
 class PreFiltering(object):
-    def __init__(self, pin_folder, results_04, testing=False):
-        self.pinFolder = pin_folder
-        self.pinFiles = os.listdir(self.pinFolder)
+    def __init__(self, pin_folder, results_04, testing: bool = False) -> None:
+        self.pinFolder = str(pin_folder)
+        self.pinFiles = sorted(
+            entry.name
+            for entry in pathlib.Path(self.pinFolder).iterdir()
+            if entry.is_file()
+        )
         self.testing = testing
-        self.results = pd.read_csv(results_04, sep='\t')
+        self.results = pd.read_csv(results_04, sep="\t", low_memory=False)
         self.__check_testing()
-        self.percolatorProteins = self.results["Protein"].tolist()
-        self.proteins = []
+        self.percolatorProteins = (
+            self.results["Protein"].dropna().astype(str).tolist()
+            if "Protein" in self.results.columns
+            else []
+        )
+        self.proteins: list[str] = []
 
-    def __check_testing(self):
+    def __check_testing(self) -> None:
         if self.testing:
             self.results = self.results.head(20)
 
-    def filter_proteins(self):
-        for prot in self.percolatorProteins:
-            if prot not in self.proteins:
-                self.proteins.append(prot)
+    def filter_proteins(self) -> list[str]:
+        seen: set[str] = set()
+        for raw_entry in self.percolatorProteins:
+            for part in _PROT_SPLIT_RE.split(str(raw_entry)):
+                tok = _clean_protein_token(part)
+                if tok and tok not in seen:
+                    seen.add(tok)
+                    self.proteins.append(tok)
+        return self.proteins
 
-    def filter_pin_files(self, outdir):
-        import pathlib
+    def filter_pin_files(self, outdir: str | os.PathLike[str]) -> list[pathlib.Path]:
+        out_path = pathlib.Path(outdir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        written: list[pathlib.Path] = []
 
-        pathlib.Path(outdir).mkdir(parents=True, exist_ok=True)
-        i = 0
+        escaped_pattern = (
+            "|".join(re.escape(p) for p in self.proteins) if self.proteins else ""
+        )
+
         for file in self.pinFiles:
-            if 'fixed' in file and 'pin' in file:
-                i += 1
-                print(i, len(self.pinFiles), end="\r")
-                df = pd.read_csv(f'{self.pinFolder}/{file}', sep='\t')
-                if self.proteins:
-                    mask = df["Proteins"].fillna("").str.contains('|'.join(self.proteins), na=False)
-                    df = df[mask]
-                else:
-                    df = df.iloc[0:0]
-                df.to_csv(f'{outdir}/filtered_{file}', sep='\t', index=False)
+            lower_file = file.lower()
+            if "pin" not in lower_file and "pep_results" not in lower_file:
+                continue
+            src_file = pathlib.Path(self.pinFolder) / file
+            if not src_file.is_file():
+                continue
+
+            df = pd.read_csv(src_file, sep="\t", low_memory=False)
+            df = clean_pin_candidates(df)
+            if "Label" in df.columns:
+                df = df[pd.to_numeric(df["Label"], errors="coerce") == 1]
+
+            if escaped_pattern and not df.empty and "Proteins" in df.columns:
+                mask = df["Proteins"].fillna("").astype(str).str.contains(
+                    escaped_pattern, regex=True, na=False
+                )
+                df = df[mask].reset_index(drop=True)
+            else:
+                df = df.iloc[0:0]
+
+            dest = out_path / f"filtered_{file}"
+            df.to_csv(dest, sep="\t", index=False)
+            written.append(dest)
+
+        return written
 
 
 class FeatureFishing(object):
-    def __init__(self, results, pin_folder, testing=False):
-        """
-        :param results: should be the filetype_results_02.txt from uproteins.
-        :param pin_folder: the directory containing the split pin files.
-        """
-        self.results = pd.read_csv(results, sep='\t')
+    def __init__(self, results, pin_folder, testing: bool = False) -> None:
+        self.results = pd.read_csv(results, sep="\t", low_memory=False)
         self.testing = testing
         self.__check_testing()
-        self.specFiles = self.results["SpecFile"].tolist()
-        self.scanNum = self.results["ScanNum"].tolist()
-        self.pinFolder = pin_folder
-        self.pinFiles = os.listdir(pin_folder)
+        self.specFiles = (
+            self.results["SpecFile"].astype(str).tolist()
+            if "SpecFile" in self.results.columns
+            else []
+        )
+        self.scanNum = (
+            pd.to_numeric(self.results["ScanNum"], errors="coerce")
+            .dropna()
+            .astype(int)
+            .tolist()
+            if "ScanNum" in self.results.columns
+            else []
+        )
+        self.pinFolder = str(pin_folder)
+        self.pinFiles = sorted(
+            entry.name
+            for entry in pathlib.Path(self.pinFolder).iterdir()
+            if entry.is_file()
+        )
         self.dataWithFeatures = pd.DataFrame()
 
-    def __check_testing(self):
+    def __check_testing(self) -> None:
         if self.testing:
-            ...
+            return
 
-    def __add_spec_tag(self):
-        tags = []
-        for i in range(len(self.scanNum)):
-            tags.append(f'Spec {i+1}')
-        return tags
+    def add_features(self) -> "FeatureFishing":
+        target_pairs: set[tuple[str, int]] = set()
+        if "SpecFile" in self.results.columns and "ScanNum" in self.results.columns:
+            for spec, raw_scan in zip(
+                self.results["SpecFile"].astype(str), self.results["ScanNum"]
+            ):
+                try:
+                    scan_int = int(float(raw_scan))
+                except (TypeError, ValueError):
+                    continue
+                target_pairs.add((strip_ms_extension(spec), scan_int))
 
-    def add_features(self):
-        frames = []
+        scan_set = {scan for _, scan in target_pairs}
+        frames: list[pd.DataFrame] = []
         cols = None
-        j = 0
+
         for file in self.pinFiles:
-            print(j, len(self.pinFiles), end='\r')
-            if 'fixed' in file and 'pin' in file:
-                chunk = pd.read_csv(f'{self.pinFolder}/{file}', sep='\t')
-                if cols is None:
-                    cols = chunk.columns
-                chunk = chunk[chunk["ScanNr"].isin(self.scanNum)]
-                for spec, scan in zip(self.specFiles, self.scanNum):
-                    df = chunk[(chunk["SpecId"].str.contains(spec[:-5], na=False)) & (chunk["ScanNr"] == scan)]
-                    frames.append(df)
-                j += 1
-        self.dataWithFeatures = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=cols if cols is not None else [])
+            lower_file = file.lower()
+            if "pin" not in lower_file and "pep_results" not in lower_file:
+                continue
+            pin_path = pathlib.Path(self.pinFolder) / file
+            if not pin_path.is_file():
+                continue
+
+            chunk = pd.read_csv(pin_path, sep="\t", low_memory=False)
+            if cols is None:
+                cols = chunk.columns
+            chunk = clean_pin_candidates(chunk)
+            if "Label" in chunk.columns:
+                chunk = chunk[pd.to_numeric(chunk["Label"], errors="coerce") == 1]
+            if chunk.empty or not target_pairs:
+                continue
+
+            scan_series = pd.to_numeric(chunk["ScanNr"], errors="coerce")
+            chunk = chunk[scan_series.isin(scan_set)].copy()
+            if chunk.empty:
+                continue
+
+            chunk_scans = pd.to_numeric(chunk["ScanNr"], errors="coerce").astype(int)
+            chunk_stems = [
+                normalize_pin_spec_id(str(sid))[1]
+                for sid in chunk["SpecId"].astype(str)
+            ]
+            keep_mask = [
+                (stem, sc) in target_pairs
+                for stem, sc in zip(chunk_stems, chunk_scans)
+            ]
+            matched = chunk[keep_mask]
+            if not matched.empty:
+                frames.append(matched)
+
+        if frames:
+            combined = pd.concat(frames, ignore_index=True)
+            if "SpecId" in combined.columns:
+                combined = combined.drop_duplicates(subset=["SpecId"], keep="first")
+            self.dataWithFeatures = combined.reset_index(drop=True)
+        else:
+            self.dataWithFeatures = pd.DataFrame(columns=cols if cols is not None else [])
         return self
 
-    def __filter_by_scan(self, chunk, spec, scan):
-        df = chunk[(chunk["SpecId"].str.contains(spec[:-5], na=False)) & (chunk["ScanNr"] == scan)]
-        self.dataWithFeatures = pd.concat([self.dataWithFeatures, df], ignore_index=True)
+    def save_table(self, output: str | os.PathLike[str]) -> "FeatureFishing":
+        out_path = pathlib.Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        self.dataWithFeatures.to_csv(out_path, sep="\t", index=False)
         return self
-
-    def save_table(self, output):
-        self.dataWithFeatures.to_csv(output, sep='\t', index=False)
-        return self
-
-
-if __name__ == '__main__':
-    # data = FeatureFishing(results='for_predicting/genome_results_02.txt', pin_folder='pin_files/mtb')  ## the ol' working code
-    # data.add_features()
-    # data.save_table('for_predicting/Transcriptome/transcriptome_results_with_features.txt')
-    # genome_prefiltering = PreFiltering(pin_folder='genome_fixed_pin_files',
-    #                                    results_04='uproteins_results_1608/genome_results_04.txt')
-    # genome_prefiltering.filter_proteins()
-    # genome_prefiltering.filter_pin_files('genome_fixed_filtered_pin_files')
-
-
-    # data = FeatureFishing(results='uproteins_results_1608/genome_results_04.txt', pin_folder='genome_fixed_filtered_pin_files')
-    # data.add_features()
-    # data.save_table('for_predicting_1608/genome_results_with_features.txt')
-
-    # data_3008 = FeatureFishing(results='uproteins_results_3008/genome_results_04.txt', pin_folder='genome_fixed_filtered_pin_files')
-    # data_3008.add_features()
-    # data_3008.save_table('uproteins_results_3008/for_predicting/genome_results_with_features.txt')
-
-    transcriptome_3008 = FeatureFishing(results='uproteins_results_3008/transcriptome_results_04.txt',
-                                        pin_folder='transcriptome_fixed_pin_files')
-    transcriptome_3008.add_features()
-    transcriptome_3008.save_table('uproteins_results_3008/for_predicting/transcriptome_results_with_features.txt')
-
-
