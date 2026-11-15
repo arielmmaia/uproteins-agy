@@ -195,5 +195,6 @@ class PostMSPipeline(object):
             df=f"{self.folder}/post_perc/{self.filetype}_results_04.txt",
             folder=self.folder,
             filetype=self.filetype,
+            transcriptome_gff="assembled.gtf" if self.filetype == "transcriptome" else None,
         )
         results.reformat(pre_validation=True)
