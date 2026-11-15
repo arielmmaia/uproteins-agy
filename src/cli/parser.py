@@ -19,6 +19,7 @@
 
 
 import argparse
+import pathlib
 import sys
 import os
 import typing as t
@@ -559,6 +560,60 @@ _validate_parser.add_argument(
     help="Whether transcriptome database was generated or not. If the "
     "transcriptome database was not generated, ignore this."
 )
+_validate_parser.add_argument(
+    "--model",
+    type=_types.FilePath,
+    default=None,
+    help="Optional path to a custom Spectrum Forest model (.json or legacy .pkl). "
+    "Defaults to the bundled spectral_forest_v1_trees.json model.",
+)
+
+# ======================
+# TRAIN-VALIDATOR MODE
+# ======================
+_train_validator_parser = _modes.add_parser("train-validator")
+_train_validator_parser.add_argument(
+    "--training_pin",
+    type=_types.FilePath,
+    required=True,
+    help="Path to tab-separated Percolator PIN training table containing a binary label column (0/1).",
+)
+_train_validator_parser.add_argument(
+    "--output_model",
+    type=lambda p: pathlib.Path(p).expanduser().resolve() if p is not None else None,
+    required=True,
+    help="Destination path for the portable JSON Spectrum Forest model.",
+)
+_train_validator_parser.add_argument(
+    "--label_column",
+    type=str,
+    default="label_spectra",
+    help="Column name holding binary ground-truth spectrum labels (0 = nHC, 1 = HC; default: 'label_spectra').",
+)
+_train_validator_parser.add_argument(
+    "--n_estimators",
+    type=int,
+    default=200,
+    help="Number of decision trees in the Random Forest (default: 200).",
+)
+_train_validator_parser.add_argument(
+    "--max_depth",
+    type=int,
+    default=20,
+    help="Maximum depth per decision tree (default: 20).",
+)
+_train_validator_parser.add_argument(
+    "--cv_folds",
+    type=int,
+    default=5,
+    help="Number of peptide-grouped stratified cross-validation folds (default: 5).",
+)
+_train_validator_parser.add_argument(
+    "--seed",
+    type=int,
+    default=42,
+    help="Random seed for reproducible forest training and CV splits (default: 42).",
+)
 
 # ============
 # METRICS MODE
@@ -595,6 +650,7 @@ def get_parsers() -> tuple[
         'ms': _ms_parser,
         'postms': _postms_parser,
         'validate': _validate_parser,
+        'train-validator': _train_validator_parser,
         'metrics': _metrics_parser,
     }
 

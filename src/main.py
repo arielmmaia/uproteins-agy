@@ -36,6 +36,7 @@ from src.database import Database
 from src.postprocess import ResultsSummarizer
 from src.pipelines import PostMSPipeline, ValidatePipeline
 from src.sequtils.__helpers import ExternalAssemblyError
+from src.forest import train_spectral_forest
 from src.metrics import Metrics
 from src.utils import REPO_ROOT, ensure_dir
 
@@ -67,6 +68,24 @@ def run_workflow(
     subparser: argparse.ArgumentParser
 ):
     mode = args.mode
+
+    if mode == "train-validator":
+        res = train_spectral_forest(
+            training_pin=args.training_pin,
+            output_model=args.output_model,
+            label_column=args.label_column,
+            n_estimators=args.n_estimators,
+            max_depth=args.max_depth,
+            cv_folds=args.cv_folds,
+            random_state=args.seed,
+        )
+        cv = res.metrics.get("cross_validation", {})
+        print(
+            f"Trained Spectrum Forest model -> {res.model_path} "
+            f"(N={res.metrics['n_samples']}, CV ROC-AUC={cv.get('roc_auc', 'N/A')})"
+        )
+        print(f"uProteInS {mode} step completed.")
+        return
 
     outdir_path = ensure_dir(args.outdir)
     os.chdir(outdir_path)
