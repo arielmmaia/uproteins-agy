@@ -400,11 +400,28 @@ class PostPercolator(object):
         return self
 
     def unique_peptides(self):
-        """Copy / filter unique novel peptides into `{filetype}_utps.txt`."""
+        """Filter out I/L-isobaric canonical proteome/contaminant peptides, collapse
+        redundant transcript isoforms sharing an identical genomic coding interval,
+        and annotate single-locus vs. paralogous smORF families."""
         print("Removing non-unique peptides\n")
-        shutil.copy2(
-            f"{self.percDir}/{self.filetype}_no_anno.txt",
-            f"{self.percDir}/{self.filetype}_utps.txt",
+        str_dict = None
+        if self.filetype == "transcriptome" and pathlib.Path("assembled.gtf").is_file():
+            str_dict = StringTieGFF(gff="assembled.gtf").get_dict()
+
+        utp = PercolatorUTP(
+            coord_df=f"{self.percDir}/{self.filetype}_no_anno.txt",
+            pep=float(getattr(self.args, "pep", 1.0)),
+            qvalue=float(getattr(self.args, "qvalue", 0.01)),
+            proteome_fasta=getattr(self.args, "proteome", None),
+            stringtie_dict=str_dict,
+            max_paralog_loci=int(getattr(self.args, "max_paralog_loci", 10)),
+            unique_loci_only=bool(getattr(self.args, "unique_loci_only", False)),
+        )
+        utp.get_utps().save_table(
+            output=f"{self.percDir}/{self.filetype}_utps.txt",
+            keep="unique"
+            if getattr(self.args, "unique_loci_only", False)
+            else "paralogs",
         )
         return self
 
@@ -513,6 +530,7 @@ class Coordinator(object):
         self.proteined = pd.read_csv(proteined, sep="\t")
         self.passing_psms: set[tuple[str, int]] = self._get_passing_psms()
         self.psm_protein_coords: dict[tuple[str, int, str], str] = {}
+        self.psm_paralog_meta: dict[tuple[str, int], tuple[int, str]] = {}
         self.coordinates = self._get_coordinates()
 
     def _get_passing_psms(self) -> set[tuple[str, int]]:
@@ -533,19 +551,35 @@ class Coordinator(object):
         coordinates = self.UTPs["Genome Coordinates"].tolist()
         orfs = self.UTPs["proteinIds"].tolist()
         psm_ids = self.UTPs["PSMId"].tolist()
+        has_mult = "Locus_Multiplicity" in self.UTPs.columns
+        has_pgid = "Paralog_Group_ID" in self.UTPs.columns
+        mults = self.UTPs["Locus_Multiplicity"].tolist() if has_mult else [None] * len(psm_ids)
+        pgids = self.UTPs["Paralog_Group_ID"].tolist() if has_pgid else [None] * len(psm_ids)
+
         coordict: dict[str, str] = {}
-        for psm_id, coords, orf in zip(psm_ids, coordinates, orfs):
+        for psm_id, coords, orf, mult_v, pgid_v in zip(
+            psm_ids, coordinates, orfs, mults, pgids
+        ):
             coord_list = [c.strip() for c in str(coords).split(",") if c.strip()]
             orf_list = split_protein_tokens(orf)
             parsed_key: tuple[str, int] | None = None
             try:
                 stem, scan_num, _, _ = parse_percolator_psmid(str(psm_id))
                 parsed_key = (stem, int(scan_num))
+                if has_mult and mult_v is not None and pd.notna(mult_v):
+                    self.psm_paralog_meta[parsed_key] = (
+                        int(mult_v),
+                        str(pgid_v) if pgid_v is not None and pd.notna(pgid_v) else "SINGLE_LOCUS",
+                    )
             except ValueError:
                 parsed_key = None
 
             for idx, prot_id in enumerate(orf_list):
-                coord_val = coord_list[idx] if idx < len(coord_list) else (coord_list[0] if coord_list else "")
+                coord_val = (
+                    coord_list[idx]
+                    if idx < len(coord_list)
+                    else (coord_list[0] if coord_list else "")
+                )
                 if prot_id not in coordict:
                     coordict[prot_id] = coord_val
                 if parsed_key is not None:
@@ -554,10 +588,11 @@ class Coordinator(object):
 
     def add_information(self, output):
         spec_col = "SpecFile" if "SpecFile" in self.proteined.columns else "#SpecFile"
+        include_paralog_cols = bool(self.psm_paralog_meta) or (
+            "Locus_Multiplicity" in self.UTPs.columns
+        )
 
         if self.proteined.empty or not self.coordinates or not self.passing_psms:
-            empty_cols = [c for c in self.proteined.columns if c != "Protein"]
-            # Preserve exact output column positions: Genome Coordinates at 5, Protein at 8+1=9
             base_cols = list(self.proteined.columns)
             base_cols.insert(5, "Genome Coordinates")
             base_cols.insert(9, "entry")
@@ -565,6 +600,9 @@ class Coordinator(object):
             if "Protein" in ndf.columns:
                 ndf = ndf.drop(columns="Protein")
             ndf = ndf.rename(columns={"entry": "Protein"})
+            if include_paralog_cols:
+                ndf["Locus_Multiplicity"] = pd.Series(dtype="int64")
+                ndf["Paralog_Group_ID"] = pd.Series(dtype=object)
             ndf.to_csv(output, sep="\t", index=False)
             return self
 
@@ -574,7 +612,7 @@ class Coordinator(object):
         prot_scans = pd.to_numeric(prot_df["ScanNum"], errors="coerce")
 
         keep_mask = [
-            ( pd.notna(sc) and (st, int(sc)) in self.passing_psms )
+            (pd.notna(sc) and (st, int(sc)) in self.passing_psms)
             for st, sc in zip(prot_stems, prot_scans)
         ]
         prot_df = prot_df[keep_mask].copy()
@@ -593,6 +631,12 @@ class Coordinator(object):
                 single = prot_df.loc[[row_idx]].copy()
                 single.insert(8, "entry", [tok])
                 single.insert(5, "Genome Coordinates", [coord_val])
+                if include_paralog_cols:
+                    mult_val, pgid_val = self.psm_paralog_meta.get(
+                        (row_stem, row_scan), (1, "SINGLE_LOCUS")
+                    )
+                    single["Locus_Multiplicity"] = [mult_val]
+                    single["Paralog_Group_ID"] = [pgid_val]
                 expanded_rows.append(single)
 
         if expanded_rows:
@@ -602,6 +646,9 @@ class Coordinator(object):
             base_cols.insert(5, "Genome Coordinates")
             base_cols.insert(9, "entry")
             ndf = pd.DataFrame(columns=base_cols)
+            if include_paralog_cols:
+                ndf["Locus_Multiplicity"] = pd.Series(dtype="int64")
+                ndf["Paralog_Group_ID"] = pd.Series(dtype=object)
 
         ndf = ndf.drop_duplicates()
         if "Protein" in ndf.columns:

@@ -502,6 +502,18 @@ _postms_parser.add_argument(
     help="Path to free2bind directory containing free_align.pl.",
     type=_types.DirectoryPath,
 )
+_postms_parser.add_argument(
+    "--max_paralog_loci",
+    help="Maximum number of paralogous genomic loci allowed for a novel smORF peptide (Default: 10).",
+    type=int,
+    default=10,
+)
+_postms_parser.add_argument(
+    "--unique_loci_only",
+    help="Retain only single-locus novel smORF peptides (Locus_Multiplicity == 1).",
+    action="store_true",
+    default=False,
+)
 
 # =============
 # VALIDATE MODE
