@@ -625,8 +625,22 @@ _metrics_parser.add_argument(
     type=_types.DirectoryName,
     required=True
 )
-_metrics_parser.add_argument("--non-redundant", action="store_true")
+_metrics_parser.add_argument(
+    "--non-redundant",
+    "--non_redundant",
+    dest="non_redundant",
+    action="store_true",
+    help="Deduplicate identical microprotein sequences across Genome and Transcriptome within each subset.",
+)
 _metrics_parser.add_argument("--maxsize", type=int, default=100)
+_metrics_parser.add_argument(
+    "--Transcriptome",
+    "-T",
+    dest="transcriptome",
+    default=True,
+    action=_types.YesOrNoBooleanAction,
+    help="Include Transcriptome results when present (default: auto-detected; pass -T NO to force genome-only).",
+)
 
 
 def get_parsers() -> tuple[

@@ -16,324 +16,572 @@
 # You should have received a copy of the GNU General Public License along with
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
+"""Stage 6 summary statistics, composition/RBS plots, non-redundant FASTA export, and overlap Venns."""
+
+from __future__ import annotations
 
 import os
-import sys
+import pathlib
+import typing as t
 
+from Bio import SeqIO
+import matplotlib
+matplotlib.use("Agg", force=False)
+import matplotlib.pyplot as plt
+from matplotlib_venn import venn2
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import seaborn as sns
-from Bio import SeqIO
-from venn import venn
+
+
+def _normalize_rbs_label(raw_value: t.Any) -> str:
+    if pd.isna(raw_value):
+        return "Unannotated"
+    text = str(raw_value).strip()
+    return text if text else "Unannotated"
+
+
+def _format_rbs_tick(label: str) -> str:
+    return (
+        label.replace("Present. Low to moderate binding", "Present. Low to\nmoderate binding")
+        .replace("Present. Strong binding", "Present.\nStrong binding")
+        .replace("None (SD absent)", "None\n(SD absent)")
+    )
 
 
 class Metrics:
-    def __init__(self, args):
+    def __init__(self, args: t.Any) -> None:
         self.workingDir = os.getcwd()
-
-        self.outdir = f'{self.workingDir}'
-        print(self.outdir)
+        self.outdir = str(self.workingDir)
         self.args = args
-        self.transcriptomeDir = f'{self.outdir}/Transcriptome'
-        self.genomeDir = f'{self.outdir}/Genome'
-        self.maxsize = args.maxsize
-        self.metricsDir = f'{self.outdir}/metrics'
+        self.transcriptomeDir = f"{self.outdir}/Transcriptome"
+        self.genomeDir = f"{self.outdir}/Genome"
+        self.maxsize = int(getattr(args, "maxsize", 100))
+        self.non_redundant = bool(getattr(args, "non_redundant", False))
+        self.metricsDir = f"{self.outdir}/metrics"
         self.__check_dirs([self.metricsDir])
-        self.RBS = {}
-        self.energies = {}
-        self.data = {'microproteins': [], 'RBS': [], 'Energies': [], 'Database': [], 'Subset': []}
 
-        self.genomeResultsDir = f'{self.genomeDir}/Results'
-        self.transcriptomeResultsDir = f'{self.transcriptomeDir}/Results'
-        self.genomePreValidation = f'{self.genomeDir}/Results/genome_pre_validation_results.txt'
-        self.genomePostValidation = self.genomePreValidation.replace("pre_validation", "post_validation")
-        self.transcriptomePreValidation = f'{self.transcriptomeDir}/Results/transcriptome_pre_validation_results.txt'
-        self.transcriptomePostValidation = self.transcriptomePreValidation.replace("pre_validation", "post_validation")
+        self.RBS: dict[str, t.Any] = {}
+        self.energies: dict[str, t.Any] = {}
+        self.data: dict[str, list[t.Any]] = {
+            "microproteins": [],
+            "RBS": [],
+            "Energies": [],
+            "Database": [],
+            "Subset": [],
+        }
 
+        self.genomeResultsDir = f"{self.genomeDir}/Results"
+        self.transcriptomeResultsDir = f"{self.transcriptomeDir}/Results"
+        self.genomePreValidation = (
+            f"{self.genomeDir}/Results/genome_pre_validation_results.txt"
+        )
+        self.genomePostValidation = self.genomePreValidation.replace(
+            "pre_validation", "post_validation"
+        )
+        self.transcriptomePreValidation = (
+            f"{self.transcriptomeDir}/Results/transcriptome_pre_validation_results.txt"
+        )
+        self.transcriptomePostValidation = self.transcriptomePreValidation.replace(
+            "pre_validation", "post_validation"
+        )
+
+        self.has_transcriptome = self._detect_transcriptome()
         self.colors = ["#6A93E6", "lightgreen"]
         self.palette = {"Genome": "#6A93E6", "Transcriptome": "lightgreen"}
 
-        self.fastaFiles = []
+        self.fastaFiles: list[str] = []
+        self.df = pd.DataFrame(data=self.data)
+        self.aa_distribution_df = pd.DataFrame()
+        self.rbs_summary_df = pd.DataFrame()
 
+    def _detect_transcriptome(self) -> bool:
+        explicit = getattr(self.args, "transcriptome", None)
+        files_exist = os.path.isfile(self.transcriptomePreValidation) or os.path.isfile(
+            self.transcriptomePostValidation
+        )
+        if explicit is False:
+            return False
+        if isinstance(explicit, str):
+            norm = explicit.strip().upper()
+            if norm in {"NO", "N", "FALSE", "0"}:
+                return False
+            if norm in {"YES", "Y", "TRUE", "1"}:
+                return files_exist
+        return files_exist
+
+    @property
+    def active_databases(self) -> list[str]:
+        return ["Genome", "Transcriptome"] if self.has_transcriptome else ["Genome"]
 
     @staticmethod
-    def __check_dirs(folders):
+    def __check_dirs(folders: t.Iterable[str]) -> None:
         for folder in folders:
-            if not os.path.exists(folder):
-                os.mkdir(folder)
+            pathlib.Path(folder).mkdir(parents=True, exist_ok=True)
 
-    def __check_redundant(self):
-        self.df = self.df.drop_duplicates(subset=["microproteins"])
+    def _apply_non_redundant(self) -> None:
+        if self.non_redundant and not self.df.empty:
+            self.df = (
+                self.df.drop_duplicates(subset=["Subset", "microproteins"], keep="first")
+                .reset_index(drop=True)
+            )
+            self.data = {
+                col: self.df[col].tolist()
+                for col in ("microproteins", "RBS", "Energies", "Database", "Subset")
+            }
 
-    def count_sequences(self):
+    def count_sequences(self) -> pd.DataFrame:
+        self.data = {
+            "microproteins": [],
+            "RBS": [],
+            "Energies": [],
+            "Database": [],
+            "Subset": [],
+        }
 
-        def count(df, subset, db):
-            df = pd.read_csv(df, sep='\t')
+        def count(filepath: str, subset: str, db: str) -> None:
+            if not os.path.isfile(filepath):
+                return
+            df = pd.read_csv(filepath, sep="\t", low_memory=False)
+            if df.empty or "Protein sequence" not in df.columns:
+                return
+            df = df.dropna(subset=["Protein sequence"]).copy()
+            df["Protein sequence"] = df["Protein sequence"].astype(str)
             df = df[df["Protein sequence"].str.len() <= self.maxsize]
             df = df.drop_duplicates(subset=["Protein sequence"])
-            # df = df.drop_duplicates(subset=["ORF name"])
+
             total_mips = df["Protein sequence"].tolist()
-            rbs = df["Shine Dalgarno"].tolist()
-            energies = df["Free Energy"].tolist()
+            rbs_list = (
+                df["Shine Dalgarno"].tolist()
+                if "Shine Dalgarno" in df.columns
+                else [np.nan] * len(total_mips)
+            )
+            energies = (
+                pd.to_numeric(df["Free Energy"], errors="coerce").tolist()
+                if "Free Energy" in df.columns
+                else [np.nan] * len(total_mips)
+            )
 
             for i, mp in enumerate(total_mips):
-                self.data['microproteins'].append(mp)
-                self.data["RBS"].append(rbs[i])
+                self.data["microproteins"].append(mp)
+                self.data["RBS"].append(rbs_list[i])
                 self.data["Energies"].append(energies[i])
                 self.data["Subset"].append(subset)
                 self.data["Database"].append(db)
 
-        count(df=self.genomePreValidation, db="Genome", subset="Pre-validation")
-        count(df=self.genomePostValidation, db="Genome", subset="Validated")
-        count(df=self.transcriptomePreValidation, db="Transcriptome", subset="Pre-validation")
-        count(df=self.transcriptomePostValidation, db="Transcriptome", subset="Validated")
+        count(filepath=self.genomePreValidation, db="Genome", subset="Pre-validation")
+        count(filepath=self.genomePostValidation, db="Genome", subset="Validated")
+        if self.has_transcriptome:
+            count(
+                filepath=self.transcriptomePreValidation,
+                db="Transcriptome",
+                subset="Pre-validation",
+            )
+            count(
+                filepath=self.transcriptomePostValidation,
+                db="Transcriptome",
+                subset="Validated",
+            )
+
         self.df = pd.DataFrame(data=self.data)
-        # self.__check_redundant()
+        self._apply_non_redundant()
+        return self.df
 
+    def plot_aa_dist(self) -> pd.DataFrame:
+        """Compute per-(Database, Subset) amino-acid frequencies summing to 100.0% per cohort."""
+        aa_counts: dict[tuple[str, str], dict[str, int]] = {}
+        subset_totals: dict[tuple[str, str], int] = {}
 
-    def plot_aa_dist(self):
-        plt.clf()
-        aas = {}
-        total = {}
-        for i, mp in enumerate(self.data["microproteins"]):
+        for mp, db, subset in zip(
+            self.df["microproteins"].astype(str) if not self.df.empty else [],
+            self.df["Database"].astype(str) if not self.df.empty else [],
+            self.df["Subset"].astype(str) if not self.df.empty else [],
+        ):
+            key = (db, subset)
+            bucket = aa_counts.setdefault(key, {})
+            subset_totals.setdefault(key, 0)
             for aa in mp:
-                db = self.data["Database"][i]
-                if db not in aas:
-                    aas[db] = {}
-                subset = self.data["Subset"][i]
-                if db not in total:
-                    total[db] = 0
-                if subset not in aas[db]:
-                    aas[db][subset] = {}
-                if aa not in aas[db][subset]:
-                    aas[db][subset][aa] = 0
-                aas[db][subset][aa] += 1
-                total[db] += 1
+                bucket[aa] = bucket.get(aa, 0) + 1
+                subset_totals[key] += 1
 
-        data = {'Amino acid': [], 'Subset': [], "Database": [], 'Count': []}
-        plt.figure(figsize=(5, 6))
+        rows: list[dict[str, t.Any]] = []
+        for (db, subset), bucket in aa_counts.items():
+            denom = subset_totals[(db, subset)]
+            if denom <= 0:
+                continue
+            for aa in sorted(bucket.keys()):
+                cnt = bucket[aa]
+                rows.append(
+                    {
+                        "Amino acid": aa,
+                        "Database": db,
+                        "Subset": subset,
+                        "Residue_Count": cnt,
+                        "Frequency_Pct": (cnt / denom) * 100.0,
+                    }
+                )
 
-        for db in aas:
-            for subset in aas[db]:
-                for aa in aas[db][subset]:
-                    data['Amino acid'].append(aa)
-                    data['Count'].append(((int(aas[db][subset][aa]))/total[db])*100)
-                    data['Subset'].append(subset)
-                    data['Database'].append(db)
-        ax = sns.barplot(data=data, x="Amino acid", hue="Database", ci=None, y="Count", palette=["#6A93E6", "lightgreen"],
-                         edgecolor='black')
-        plt.ylabel("Frequency (subset %)")
-        sns.despine(top=True, right=True)
+        self.aa_distribution_df = pd.DataFrame(
+            rows,
+            columns=["Amino acid", "Database", "Subset", "Residue_Count", "Frequency_Pct"],
+        )
+        self.aa_distribution_df.to_csv(
+            f"{self.metricsDir}/aa_distribution.tsv", sep="\t", index=False
+        )
 
-        plt.savefig(f'{self.metricsDir}/aa_distribution.pdf', dpi=600)
+        present_subsets = [
+            s
+            for s in ("Pre-validation", "Validated")
+            if not self.aa_distribution_df.empty
+            and (self.aa_distribution_df["Subset"] == s).any()
+        ]
+        n_panels = max(len(present_subsets), 1)
+        fig, axes = plt.subplots(1, n_panels, figsize=(6 * n_panels, 5), squeeze=False)
 
-    def plot_orf_numbers(self):
-        plt.clf()
-        data = {'Microproteins': [], 'Subset': [], "Database": []}
-        dbs = ["Genome", "Transcriptome"]
+        if not present_subsets:
+            axes[0, 0].text(
+                0.5, 0.5, "No microprotein sequences available", ha="center", va="center"
+            )
+            axes[0, 0].set_axis_off()
+        else:
+            active_palette = {db: self.palette[db] for db in self.active_databases}
+            for idx, sub in enumerate(present_subsets):
+                ax = axes[0, idx]
+                sub_df = self.aa_distribution_df[
+                    self.aa_distribution_df["Subset"] == sub
+                ]
+                sns.barplot(
+                    data=sub_df,
+                    x="Amino acid",
+                    y="Frequency_Pct",
+                    hue="Database",
+                    errorbar=None,
+                    palette=active_palette,
+                    edgecolor="black",
+                    ax=ax,
+                )
+                ax.set_title(f"Amino Acid Composition ({sub})")
+                ax.set_ylabel("Frequency (%)" if idx == 0 else "")
+                sns.despine(ax=ax, top=True, right=True)
+
+        fig.tight_layout()
+        fig.savefig(f"{self.metricsDir}/aa_distribution.pdf", dpi=300)
+        plt.close(fig)
+        return self.aa_distribution_df
+
+    def plot_orf_numbers(self) -> pd.DataFrame:
+        dbs = self.active_databases
         subsets = ["Pre-validation", "Validated"]
+        rows: list[dict[str, t.Any]] = []
         for db in dbs:
             for subset in subsets:
-                df = self.df[self.df["Subset"] == subset]
-                df = df[df["Database"] == db]
-                data["Microproteins"].append(len(df["microproteins"].tolist()))
-                data["Subset"].append(subset)
-                data["Database"].append(db)
+                if self.df.empty:
+                    cnt = 0
+                else:
+                    sub_df = self.df[
+                        (self.df["Subset"] == subset) & (self.df["Database"] == db)
+                    ]
+                    cnt = len(sub_df)
+                rows.append({"Microproteins": cnt, "Subset": subset, "Database": db})
 
-        df = pd.DataFrame(data=data)
-        # plt.bar(x="Database", height="Microproteins", hue="Subset")
-        plt.figure(figsize=(5, 6))
+        summary_df = pd.DataFrame(rows)
+        fig, ax = plt.subplots(figsize=(5.5, 6))
+        active_palette = {db: self.palette[db] for db in dbs}
+        sns.barplot(
+            data=summary_df,
+            x="Subset",
+            y="Microproteins",
+            hue="Database",
+            errorbar=None,
+            palette=active_palette,
+            edgecolor="black",
+            ax=ax,
+        )
+        for patch in ax.patches:
+            height = patch.get_height()
+            if height > 0:
+                ax.annotate(
+                    str(int(round(height))),
+                    (patch.get_x() + patch.get_width() / 2.0, height),
+                    ha="center",
+                    va="center",
+                    xytext=(0, 8),
+                    textcoords="offset points",
+                )
+        ax.set_xlabel("Subset")
+        ax.set_ylabel("Counts")
+        ax.set_title("Identified Microproteins by Subset and Database")
+        sns.despine(ax=ax, top=True, right=True)
+        fig.tight_layout()
+        fig.savefig(f"{self.metricsDir}/identified_microproteins.pdf", dpi=300)
+        plt.close(fig)
+        return summary_df
 
-        sns.barplot(data=df, x='Subset', y='Microproteins', hue='Database', palette={"Genome": "#6A93E6", "Transcriptome": "lightgreen"},
-                    edgecolor='black')
+    def plot_energies(self) -> None:
+        fig, ax = plt.subplots(figsize=(5.5, 6))
+        energy_df = self.df.copy() if not self.df.empty else pd.DataFrame()
+        if not energy_df.empty:
+            energy_df["Energies"] = pd.to_numeric(energy_df["Energies"], errors="coerce")
+            energy_df = energy_df.dropna(subset=["Energies"])
 
-        for p in plt.gca().patches:
-            if p.get_height() != 0:  # Skip annotation if height is 0
+        if energy_df.empty:
+            ax.text(
+                0.5,
+                0.5,
+                "No thermodynamic RBS energies available",
+                ha="center",
+                va="center",
+            )
+            ax.set_axis_off()
+        else:
+            active_palette = {db: self.palette[db] for db in self.active_databases}
+            sns.boxplot(
+                data=energy_df,
+                x="Subset",
+                hue="Database",
+                y="Energies",
+                palette=active_palette,
+                ax=ax,
+            )
+            ax.set_ylabel("Free Energy (kcal/mol)")
+            sns.despine(ax=ax, top=True, right=True)
 
-                plt.gca().annotate(str(int(p.get_height())), (p.get_x() + p.get_width() / 2., p.get_height()),
-                                   ha='center', va='center', xytext=(0, 10), textcoords='offset points')
+        fig.tight_layout()
+        fig.savefig(f"{self.metricsDir}/energies_distribution.pdf", dpi=300)
+        plt.close(fig)
 
-        plt.xlabel('Subset')
-        plt.ylabel('Counts')
-        plt.title('Barplot of Counts by Subset and Database')
-        plt.legend(title='Database')
-        sns.despine(top=True, right=True)
-        plt.savefig(f'{self.metricsDir}/identified_microproteins.pdf', dpi=600)
+    def plot_rbs(self) -> pd.DataFrame:
+        """Tabulate and plot RBS classes per Subset without double-counting or erasing Leaderless."""
+        if self.df.empty:
+            self.rbs_summary_df = pd.DataFrame(
+                columns=["Subset", "Database", "RBS", "Count"]
+            )
+        else:
+            work = self.df.copy()
+            work["RBS_Clean"] = [_normalize_rbs_label(v) for v in work["RBS"]]
+            grouped = (
+                work.groupby(["Subset", "Database", "RBS_Clean"], dropna=False)
+                .size()
+                .reset_index(name="Count")
+                .rename(columns={"RBS_Clean": "RBS"})
+            )
+            self.rbs_summary_df = grouped
 
-    def plot_energies(self):
-        plt.clf()
-        # fig, ax = plt.subplots(figsize=(5, 6))
-        plt.figure(figsize=(5, 6))
+        self.rbs_summary_df.to_csv(
+            f"{self.metricsDir}/shine_dalgarno_counts.tsv", sep="\t", index=False
+        )
 
-        # sns.set(rc={'figure.figsize': (11.7, 8.27)})
-        ax = sns.boxplot(data=self.df, x="Subset", hue="Database", y="Energies", palette=self.palette)
-        # plt.figure(figsize=(10,20))
-        sns.despine(top=True, right=True)
-        # sns.move_legend(ax, "upper right", bbox_to_anchor=(1, 1.2))
-        plt.tight_layout()
-        plt.legend([], [], frameon=False)
+        present_subsets = [
+            s
+            for s in ("Pre-validation", "Validated")
+            if not self.rbs_summary_df.empty
+            and (self.rbs_summary_df["Subset"] == s).any()
+        ]
+        n_panels = max(len(present_subsets), 1)
+        fig, axes = plt.subplots(1, n_panels, figsize=(6 * n_panels, 6), squeeze=False)
 
-        plt.savefig(f'{self.metricsDir}/energies_distribution.pdf', dpi=600)
+        if not present_subsets:
+            axes[0, 0].text(
+                0.5, 0.5, "No Shine-Dalgarno annotations available", ha="center", va="center"
+            )
+            axes[0, 0].set_axis_off()
+        else:
+            active_palette = {db: self.palette[db] for db in self.active_databases}
+            for idx, sub in enumerate(present_subsets):
+                ax = axes[0, idx]
+                sub_df = self.rbs_summary_df[self.rbs_summary_df["Subset"] == sub].copy()
+                sub_df["RBS_Display"] = [_format_rbs_tick(v) for v in sub_df["RBS"]]
+                sns.barplot(
+                    data=sub_df,
+                    x="RBS_Display",
+                    y="Count",
+                    hue="Database",
+                    errorbar=None,
+                    palette=active_palette,
+                    edgecolor="black",
+                    ax=ax,
+                )
+                ax.set_title(f"Ribosome Binding Sites ({sub})")
+                ax.set_xlabel("Shine-Dalgarno Category")
+                ax.set_ylabel("Count" if idx == 0 else "")
+                for patch in ax.patches:
+                    height = patch.get_height()
+                    if height > 0:
+                        ax.annotate(
+                            str(int(round(height))),
+                            (patch.get_x() + patch.get_width() / 2.0, height),
+                            ha="center",
+                            va="center",
+                            xytext=(0, 8),
+                            textcoords="offset points",
+                        )
+                sns.despine(ax=ax, top=True, right=True)
 
+        fig.tight_layout()
+        fig.savefig(f"{self.metricsDir}/shine-dalgarno.pdf", dpi=300)
+        plt.close(fig)
+        return self.rbs_summary_df
 
-    def plot_rbs(self):
-        plt.clf()
-        # counts = self.df.groupby(["Subset", "Database", "RBS"]).size().reset_index(name="Count")
-        rbs = set(self.df["RBS"].tolist())
-        # Plot
-        # plt.figure(figsize=(10, 6))
-        # # sns.barplot(data=counts, x="Subset", y="Count", hue="Database", ci=None, edgecolor='black',
-        # #             palette=self.palette)
-        # counts = self.df.groupby(["Subset", "Database", "RBS"]).size().unstack(fill_value=0).reset_index()
-        # counts_melted = pd.melt(counts, id_vars=["Subset", "Database"], value_vars=[rb for rb in rbs], var_name="String",
-        #                         value_name="Count")
-        # plt.figure(figsize=(10, 6))
-        # sns.barplot(data=counts_melted, x="Subset", y="Count", hue="Database", ci=None, hue_order=["X", "Y"],
-        #             palette="colorblind")
-        # # plt.title("Occurrences of strings 'A', 'B', 'C' in column 'RBS' divided by 'Subset' with hue 'Database'")
-        # plt.xlabel("Subset")
-        # plt.ylabel("Count")
-        # plt.show()
-        # print(self.df)
-        # counts = self.df.groupby(["Subset", "Database", "RBS"]).size().unstack(fill_value=0).reset_index()
-        # df = pd.DataFrame(counts)
-        # print(counts)
-        rbs_done = []
-        # data = {"Counts": [], "RBS": [], "Subset": []}
-        data = {"RBS": [], "Database": [], "Subset": []}
-        rbscount = {}
-        dbs = self.df["Database"].tolist()
-        subsets = self.df["Subset"].tolist()
-        for i, rbs in enumerate(self.df["RBS"].tolist()):
-            db = dbs[i]
-            if rbs not in rbscount:
-                rbscount[rbs] = {}
-            if db not in rbscount[rbs]:
-                rbscount[rbs][db] = {}
-            subset = subsets[i]
-            if subset not in rbscount[rbs][db]:
-                rbscount[rbs][db][subset] = 0
-            rbscount[rbs][db][subset] += 1
-        for rbs in rbscount:
-            for db in rbscount[rbs]:
-                for sub in rbscount[rbs][db]:
-                    data["RBS"].append(rbscount[rbs][db][sub])
-                    data["Database"].append(db)
-                    data["Subset"].append(rbs.replace("Leaderless", "Absent").replace("Present. Low to moderate binding", "Present. Low to\n moderate binding").replace("Strong binding", "\nStrong binding"))
+    def generate_fasta(self) -> list[str]:
+        self.fastaFiles = []
+        specs: list[tuple[str, str, str]] = [
+            (self.genomePreValidation, self.genomeResultsDir, "Pre-validation"),
+            (self.genomePostValidation, self.genomeResultsDir, "Validated"),
+        ]
+        if self.has_transcriptome:
+            specs = [
+                (
+                    self.transcriptomePreValidation,
+                    self.transcriptomeResultsDir,
+                    "Pre-validation",
+                ),
+                (
+                    self.transcriptomePostValidation,
+                    self.transcriptomeResultsDir,
+                    "Validated",
+                ),
+            ] + specs
 
-        plt.figure(figsize=(5, 6))
-        df = pd.DataFrame(data)
+        for filepath, folder, subset_name in specs:
+            if not os.path.isfile(filepath):
+                continue
+            pathlib.Path(folder).mkdir(parents=True, exist_ok=True)
+            df = pd.read_csv(filepath, sep="\t", low_memory=False)
+            fasta_lines: list[str] = []
+            if not df.empty and "Protein sequence" in df.columns:
+                df = df.dropna(subset=["Protein sequence"]).copy()
+                df["Protein sequence"] = df["Protein sequence"].astype(str)
+                df = df[df["Protein sequence"].str.len() <= self.maxsize]
+                df = df.drop_duplicates(subset=["Protein sequence"])
 
-        sns.barplot(data=df, x="Subset", y="RBS", hue="Database", ci=None, palette=self.palette, estimator=sum,
-                    edgecolor='black')
-        # plt.title("Stacked Bar Plot of RBS values by Subset with Hue by Database")
-        # plt.xlabel("Subset")
-        # plt.ylabel("RBS Values")
-        plt.legend(title="Database")
-        sns.despine(top=True, right=True)
-        # plt.tight_layout()
-        # plt.xticks(rotation=45, ha='right')
-        plt.tight_layout(h_pad=-5)
+                entries = (
+                    df["ORF name"].astype(str).tolist()
+                    if "ORF name" in df.columns
+                    else [f"smORF_{idx+1}" for idx in range(len(df))]
+                )
+                coords = (
+                    df["Genome Coordinates"].fillna("").astype(str).tolist()
+                    if "Genome Coordinates" in df.columns
+                    else [""] * len(df)
+                )
+                seqs = df["Protein sequence"].tolist()
 
-        plt.xlabel("Shine-Dalgarno")
-        for p in plt.gca().patches:
-            if p.get_height() != 0:  # Skip annotation if height is 0
+                seen_headers: dict[str, int] = {}
+                for entry, coord, seq in zip(entries, coords, seqs):
+                    clean_coord = coord.strip()
+                    base_header = f"{entry}|{clean_coord}" if clean_coord else entry
+                    if base_header in seen_headers:
+                        seen_headers[base_header] += 1
+                        header = f"{base_header}_{seen_headers[base_header]}"
+                    else:
+                        seen_headers[base_header] = 1
+                        header = base_header
+                    fasta_lines.append(f">{header}\n{seq}\n")
 
-                plt.gca().annotate(str(int(p.get_height())), (p.get_x() + p.get_width() / 2., p.get_height()),
-                                   ha='center', va='center', xytext=(0, 10), textcoords='offset points')
-        plt.savefig(f'{self.metricsDir}/shine-dalgarno.pdf', dpi=600)
-        # total = tips.groupby('day')['total_bill'].sum().reset_index()
-
-        # df.set_index('Subset').plot(kind='bar', stacked=True, color=['steelblue', 'red'])
-
-        # ax = sns.histplot(data, hue='Database', weights='RBS', x="Subset", multiple='stack')
-
-        # plt.title("Occurrences of strings 'A', 'B', 'C' in column 'RBS' divided by 'Subset' with hue 'Database'")
-        # plt.xlabel("Subset")
-        # plt.ylabel("Count")
-        # plt.legend(title="Database")
-        # Plot stacked bars
-        # plt.figure(figsize=(10, 6))
-        # plt.figure(figsize=(10, 6))
-        # sns.barplot(data=counts, x="Subset", y=[rb for rb in rbs], hue="Database", ci=None)
-        # plt.title("Occurrences of strings 'A', 'B', 'C' in column 'RBS' divided by 'Subset' with hue 'Database'")
-        # plt.xlabel("Subset")
-        # plt.ylabel("Count")
-
-        # plt.title("smORF-containing transcripts with Ribosome binding sites (RBS)")
-        # plt.xlabel("Subset")
-        # plt.ylabel("RBS")
-
-    def generate_fasta(self):
-        files = [self.transcriptomePreValidation, self.transcriptomePostValidation, self.genomePreValidation,
-                 self.genomePostValidation]
-        folders = [self.transcriptomeResultsDir, self.transcriptomeResultsDir, self.genomeResultsDir,
-                   self.genomeResultsDir]
-        subsets = ['Pre-validation', 'Validated', 'Pre-validation', 'Validated']
-        for i, file in enumerate(files):
-            fasta = []
-            df = pd.read_csv(file, sep='\t')
-            df = df[df["Protein sequence"].str.len() <= self.maxsize]
-            print("lens", len(df["Protein sequence"].tolist()))
-            # df = self.df[self.df["Subset"] == subsets[i]]
-
-            df = df.drop_duplicates(subset=["Protein sequence"])
-            print("dupli", len(df["Protein sequence"].tolist()))
-            entries, seqs = df["ORF name"].tolist(), df["Protein sequence"].tolist()
-            fasta_file = f'{folders[i]}/{subsets[i]}.fasta'
-            for entry, seq in zip(entries, seqs):
-                fasta.append(f'>{entry}\n{seq}\n')
-            with open(fasta_file, 'w') as handler:
-                handler.writelines(fasta)
+            fasta_file = f"{folder}/{subset_name}.fasta"
+            with open(fasta_file, "w", encoding="utf-8") as handler:
+                handler.writelines(fasta_lines)
             self.fastaFiles.append(fasta_file)
 
+        return self.fastaFiles
 
-    def plot_venn(self):
-        validated = ''
-        pre_validation = ''
-        for fasta in self.fastaFiles:
-            if 'Validated' in fasta:
-                validated += f'{fasta},'
-            else:
-                pre_validation += f'{fasta},'
-        val_venn = ResultsComparison(fasta_files=f'{validated}', groups='Transcriptome,Genome')
-        val_venn.gather_microproteins()
-        val_venn.plot_venn(palette=self.colors[::-1], output=f'{self.metricsDir}/venn_validated.png')
+    def plot_venn(self) -> list[str]:
+        if not self.has_transcriptome:
+            return []
 
-        pre_val_venn = ResultsComparison(fasta_files=pre_validation, groups='Transcriptome,Genome')
-        pre_val_venn.gather_microproteins()
-        pre_val_venn.plot_venn(palette=self.colors[::-1], output=f'{self.metricsDir}/venn_pre_validation.png')
+        validated_files = [f for f in self.fastaFiles if f.endswith("/Validated.fasta")]
+        pre_files = [f for f in self.fastaFiles if f.endswith("/Pre-validation.fasta")]
+        written: list[str] = []
 
+        if len(validated_files) == 2:
+            val_out = f"{self.metricsDir}/venn_validated.png"
+            val_venn = ResultsComparison(
+                fasta_files=",".join(validated_files), groups="Transcriptome,Genome"
+            )
+            val_venn.gather_microproteins()
+            val_venn.plot_venn(palette=self.colors[::-1], output=val_out)
+            written.append(val_out)
 
-    def plot_venn_2(self):
-        print(self.df)
-        # rna_pre = self.df[(self.df["Subset"== "Pre-validation"]) & (self.df["Database"] == "Transcriptome")]
-        print(self.df[(self.df["Subset" == "Pre-validation"]) & (self.df["Database"] == "Transcriptome")])
+        if len(pre_files) == 2:
+            pre_out = f"{self.metricsDir}/venn_pre_validation.png"
+            pre_venn = ResultsComparison(
+                fasta_files=",".join(pre_files), groups="Transcriptome,Genome"
+            )
+            pre_venn.gather_microproteins()
+            pre_venn.plot_venn(palette=self.colors[::-1], output=pre_out)
+            written.append(pre_out)
 
-        mps = {"Transcriptome": set(self.df[(self.df["Subset" == "Pre-validation"]) & (self.df["Database"] == "Transcriptome")]["Protein sequence"].tolist()),
-               "Genome": set(self.df[(self.df["Subset" == "Pre-validation"]) & (self.df["Database"] == "Genome")]["Protein sequence"].tolist())}
-        # venn(self.microproteins, cmap=['#1D7DBB', '#BB1D1D'], fontsize=14)
-        venn(mps, fontsize=16, cmap=self.colors[::-1])
-        # plt.legend([])
-        plt.show()
-        # plt.savefig(f'{self.metricsDir}/')
+        return written
+
+    def plot_venn_2(self, subset: str = "Pre-validation") -> t.Optional[str]:
+        if not self.has_transcriptome or self.df.empty:
+            return None
+
+        tx_seqs = set(
+            self.df[
+                (self.df["Subset"] == subset) & (self.df["Database"] == "Transcriptome")
+            ]["microproteins"]
+            .astype(str)
+            .tolist()
+        )
+        g_seqs = set(
+            self.df[(self.df["Subset"] == subset) & (self.df["Database"] == "Genome")][
+                "microproteins"
+            ]
+            .astype(str)
+            .tolist()
+        )
+        out_path = (
+            f"{self.metricsDir}/venn_{subset.lower().replace('-', '_')}.pdf"
+        )
+        fig, ax = plt.subplots(figsize=(5, 5))
+        venn2(
+            [tx_seqs, g_seqs],
+            set_labels=("Transcriptome", "Genome"),
+            set_colors=tuple(self.colors[::-1]),
+            ax=ax,
+        )
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=300)
+        plt.close(fig)
+        return out_path
+
 
 class ResultsComparison:
-    def __init__(self, fasta_files, groups):
-        self.folders = fasta_files.split(",")
-        self.groups = groups.split(",")
+    def __init__(self, fasta_files: str, groups: str) -> None:
+        self.folders = [f.strip() for f in fasta_files.split(",") if f.strip()]
+        self.groups = [g.strip() for g in groups.split(",") if g.strip()]
+        self.microproteins: dict[str, set[str]] = {}
 
-        self.microproteins = {}
-
-    def gather_microproteins(self):
+    def gather_microproteins(self) -> dict[str, set[str]]:
         for fasta, group in zip(self.folders, self.groups):
-            if group not in self.microproteins:
-                self.microproteins[group] = set()
-            records = SeqIO.parse(fasta, 'fasta')
-            for record in records:
-                # self.microproteins[group].add(str(record.seq))
-                self.microproteins[group].add(str(record.seq))
+            bucket = self.microproteins.setdefault(group, set())
+            if not os.path.isfile(fasta):
+                continue
+            for record in SeqIO.parse(fasta, "fasta"):
+                bucket.add(str(record.seq))
+        return self.microproteins
 
-    # def gather_mps_from_df(self):
-
+    def plot_venn(
+        self, palette: t.Sequence[str], output: str | os.PathLike[str]
+    ) -> pathlib.Path:
+        out_path = pathlib.Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig, ax = plt.subplots(figsize=(5, 5))
+        keys = list(self.groups[:2])
+        if len(keys) == 2:
+            set_a = self.microproteins.get(keys[0], set())
+            set_b = self.microproteins.get(keys[1], set())
+            colors = (
+                (palette[0], palette[1])
+                if len(palette) >= 2
+                else ("lightgreen", "#6A93E6")
+            )
+            venn2([set_a, set_b], set_labels=(keys[0], keys[1]), set_colors=colors, ax=ax)
+        else:
+            ax.text(0.5, 0.5, "Single database run", ha="center", va="center")
+            ax.set_axis_off()
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=300)
+        plt.close(fig)
+        return out_path

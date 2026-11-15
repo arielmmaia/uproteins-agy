@@ -87,9 +87,22 @@ def run_workflow(
         print(f"uProteInS {mode} step completed.")
         return
 
+    prev_cwd = pathlib.Path.cwd()
     outdir_path = ensure_dir(args.outdir)
     os.chdir(outdir_path)
+    try:
+        _execute_mode_in_outdir(mode, args, subparser, outdir_path)
+    finally:
+        if prev_cwd.exists():
+            os.chdir(prev_cwd)
 
+
+def _execute_mode_in_outdir(
+    mode: str,
+    args,
+    subparser: argparse.ArgumentParser,
+    outdir_path: pathlib.Path,
+) -> None:
     if mode == "assembly":
         validators.validate_assembly(args, subparser)
 
@@ -125,12 +138,9 @@ def run_workflow(
             raise ExternalAssemblyError
         elif args.external_transcriptome is not None and args.external_gtf is None:
             raise ExternalAssemblyError
-        # genome = dg.OrfPrediction(args)
-        # genome.identify_orfs()
         print("Generating the genome database.")
         db = Database(args)
         db.translate()
-        # print("\nORFs identified \nNow performing steps to generate the GENOME database\n")
         genome_db = dg.Database("genome_ORFs.fasta", args.proteome, "genome")
         genome_db.mark_annotated()
         genome_db.unify()
@@ -194,6 +204,6 @@ def run_workflow(
         metrics.plot_energies()
         metrics.plot_rbs()
         metrics.generate_fasta()
-        # metrics.plot_venn_2()
+        metrics.plot_venn()
 
     print(f'uProteInS {mode} step completed.')
