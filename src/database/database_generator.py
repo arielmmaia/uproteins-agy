@@ -19,6 +19,8 @@
 
 
 from Bio import SeqIO
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
 
 from ..utils import concat_files
 
@@ -28,18 +30,28 @@ class Database(object):
         self.orf_to_blast = ob
         self.proteome = p
         self.filetype = filetype
+        self.annotated = 'annotated.fasta'
 
     def mark_annotated(self):
         with open('annotated.fasta', 'w') as handle:
             for record in SeqIO.parse(self.proteome, 'fasta'):
-                record.id += '_ANNO'
-                # Stopping the sequences from being written
-                # >name name extra-info
-                old_desc = record.description
-                if old_desc.split()[0] == record.id:
-                    # Old desc starts with id
-                    record.description = ' '.join(old_desc.split()[1:])
-                SeqIO.write(record, handle, 'fasta')
+                orig_id = record.id
+                new_id = orig_id if orig_id.endswith('_ANNO') else f"{orig_id}_ANNO"
+                desc_tokens = record.description.split()
+                while desc_tokens and desc_tokens[0] in (orig_id, new_id):
+                    desc_tokens.pop(0)
+                extra_desc = " ".join(desc_tokens)
+                clean_seq = "".join(str(record.seq).split()).rstrip("*").upper()
+                if not clean_seq:
+                    continue
+
+                out_record = SeqRecord(
+                    Seq(clean_seq),
+                    id=new_id,
+                    name=new_id,
+                    description=extra_desc,
+                )
+                SeqIO.write(out_record, handle, 'fasta')
         self.annotated = 'annotated.fasta'
 
     def unify(self):

@@ -27,9 +27,12 @@ class Database(object):
         self.genome = args.genome
 
     def translate(self):
+        import pathlib
+
         circular = getattr(self.args, "circular", True)
         genetic_code = getattr(self.args, "genetic_code", 11)
         if self.args.transcriptome:
+            gtf_candidate = pathlib.Path("assembled.gtf")
             rna = TranscriptomeTranslator(
                 sequence="HISAT/transcripts.fasta",
                 form='fasta',
@@ -37,6 +40,7 @@ class Database(object):
                 maxsize=int(self.args.maxsize),
                 circular=False,
                 genetic_code=genetic_code,
+                gtf_path=gtf_candidate if gtf_candidate.is_file() else None,
             )
             rna_orfs = rna.parse_frames(
                 starts=self.args.starts,
@@ -60,6 +64,7 @@ class Database(object):
             starts=self.args.starts,
             stops=self.args.stops,
             seqtype='aa',
+            entry='full',
         )
         genome_db = DatabaseGenerator(name="genome", db_type="sql")
         genome_db.add_orfs(dna_orfs)

@@ -249,3 +249,114 @@ def test_sqlite_database_resets_stale_orfome_and_parameterizes_sql(
     assert rows[0][2] == "MFRESHORF"
 
 
+@pytest.mark.database
+def test_contig_and_isoform_ids_preserved_and_unstranded_transcripts_6frame(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Regression test (Issue #15):
+    1. Multi-contig gORF headers preserve exact contig accessions (including underscores) and parse back cleanly.
+    2. StringTie isoforms (uproteins.10.1 vs uproteins.10.2) stay distinct in TranscriptExtractor and StringTieGFF.
+    3. Unstranded ('.') transcripts in assembled.gtf are translated in 6 frames, recovering minus-strand smORFs,
+       whereas stranded ('+' / '-') transcripts are translated in 3 sense frames.
+    """
+    from Bio import SeqIO
+    from src.sequtils.locus import StringTieGFF, parse_gorf_header, parse_torf_header
+    from src.sequtils.transcriptomics.assembled import TranscriptExtractor
+
+    monkeypatch.chdir(tmp_path)
+
+    # 1. Multi-contig genome with underscore contig accession + plasmid
+    genome_fa = tmp_path / "multi_contig.fasta"
+    genome_fa.write_text(
+        ">NC_000962.3\nATGGCTGCTGCTGCTGCTTAA\n"
+        ">pPlasmid_A\nATGAAACCCTTTGGGCGCTAA\n"
+    )
+    proteome_fa = tmp_path / "proteome.fasta"
+    proteome_fa.write_text(
+        ">Rv0001 Rv0001 chromosomal replication initiator*\nMKLLEIR*\n"
+        ">Rv0002_ANNO already tagged\nMPEPTIDE*\n"
+    )
+
+    # 2. Two distinct StringTie isoforms:
+    # - uproteins.10.1 is '+' stranded (3 sense frames only)
+    # - uproteins.10.2 is '.' unstranded and carries a minus-strand ORF (revcomp of ATG CCC GGG AAA TTT CGC TAA)
+    from src.sequtils.conversion.complement import reverse_complement_dna
+    minus_sense_cds = "ATGCCCGGGAAATTTCGCTAA"  # MP GKFR (18 nt + stop) -> "MPGKFR"
+    unstranded_plus_rna = "GGG" + reverse_complement_dna(minus_sense_cds) + "CCC"
+
+    ext_gtf = tmp_path / "ext_assembled.gtf"
+    ext_gtf.write_text(
+        "# StringTie version 2.2.1\n"
+        'NC_000962.3\tStringTie\ttranscript\t10\t40\t1000\t+\t.\tgene_id "uproteins.10"; transcript_id "uproteins.10.1";\n'
+        'NC_000962.3\tStringTie\texon\t10\t40\t1000\t+\t.\tgene_id "uproteins.10"; transcript_id "uproteins.10.1";\n'
+        'pPlasmid_A\tStringTie\ttranscript\t50\t90\t1000\t.\t.\tgene_id "uproteins.10"; transcript_id "uproteins.10.2";\n'
+        'pPlasmid_A\tStringTie\texon\t50\t90\t1000\t.\t.\tgene_id "uproteins.10"; transcript_id "uproteins.10.2";\n'
+    )
+    ext_tx = tmp_path / "ext_transcripts.fasta"
+    ext_tx.write_text(
+        f">uproteins.10.1\n{reverse_complement_dna(minus_sense_cds)}\n"
+        f">uproteins.10.2\n{unstranded_plus_rna}\n"
+    )
+
+    out_dir = tmp_path / "db_out"
+    # Note: omit -T YES to verify --external_gtf + --external_transcriptome auto-enables transcriptome DB!
+    uproteins([
+        "database",
+        "-o", str(out_dir),
+        "--genome", str(genome_fa),
+        "--proteome", str(proteome_fa),
+        "--external_gtf", str(ext_gtf),
+        "--external_transcriptome", str(ext_tx),
+        "--starts", "ATG",
+        "--linear",
+    ])
+
+    # Check genome_database.fasta headers & _ANNO cleanup
+    g_records = list(SeqIO.parse(out_dir / "genome_database.fasta", "fasta"))
+    g_ids = [r.id for r in g_records]
+    assert any(i.startswith("gORF_NC_000962.3_") for i in g_ids)
+    assert any(i.startswith("gORF_pPlasmid_A_") for i in g_ids)
+
+    for gid in g_ids:
+        if gid.startswith("gORF_"):
+            parsed = parse_gorf_header(gid)
+            assert parsed is not None
+            assert parsed[0] in ("NC_000962.3", "pPlasmid_A")
+
+    # Verify _ANNO idempotency, description deduplication, and '*' stripping
+    anno_map = {r.id: (r.description, str(r.seq)) for r in g_records if r.id.endswith("_ANNO")}
+    assert "Rv0001_ANNO" in anno_map
+    assert "Rv0002_ANNO" in anno_map
+    assert "Rv0002_ANNO_ANNO" not in anno_map
+    assert anno_map["Rv0001_ANNO"][1] == "MKLLEIR"
+    assert anno_map["Rv0002_ANNO"][1] == "MPEPTIDE"
+    assert not anno_map["Rv0001_ANNO"][0].startswith("Rv0001_ANNO Rv0001 ")
+
+    # Check transcriptome_database.fasta was auto-generated and translated unstranded '.' isoform in 6 frames
+    assert (out_dir / "transcriptome_database.fasta").is_file()
+    t_records = [
+        r for r in SeqIO.parse(out_dir / "transcriptome_database.fasta", "fasta")
+        if r.id.startswith("tORF_")
+    ]
+    # Stranded '+' uproteins.10.1 had reverse-complemented ORF only on antisense -> must NOT emit MPGKFR
+    tx1_seqs = [str(r.seq) for r in t_records if "uproteins.10.1" in r.id]
+    assert "MPGKFR" not in tx1_seqs
+
+    # Unstranded '.' uproteins.10.2 MUST emit MPGKFR on the reverse transcript frame with full isoform ID!
+    tx2_hits = [r for r in t_records if "uproteins.10.2" in r.id and str(r.seq) == "MPGKFR"]
+    assert len(tx2_hits) == 1
+    parsed_tx = parse_torf_header(tx2_hits[0].id)
+    assert parsed_tx is not None
+    assert parsed_tx[0] == "uproteins.10.2"
+    assert parsed_tx[3] == "reverse"
+
+    # Both isoforms preserved in TranscriptExtractor and StringTieGFF (without mutating ext_assembled.gtf!)
+    tx_dict = TranscriptExtractor(str(ext_tx)).get_transcripts()
+    assert "uproteins.10.1" in tx_dict and "uproteins.10.2" in tx_dict
+    st_dict = StringTieGFF(str(ext_gtf)).get_dict()
+    assert "uproteins.10.1" in st_dict and "uproteins.10.2" in st_dict
+    assert st_dict["uproteins.10.1"].start == 10
+    assert st_dict["uproteins.10.2"].start == 50
+
+
+
