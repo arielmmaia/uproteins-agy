@@ -16,72 +16,133 @@
 # You should have received a copy of the GNU General Public License along with
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
+"""Stage 5 Spectrum Forest validation pipeline across Genome and Transcriptome."""
 
-from ..forest import ProteinFixer, PreFiltering, FeatureFishing, SpectralForest, SpectrumMiner
+from __future__ import annotations
+
+import pathlib
+import typing as t
+
+import numpy as np
+
+from ..forest import (
+    DEFAULT_MODEL_PATH,
+    FeatureFishing,
+    PreFiltering,
+    ProteinFixer,
+    SpectralForest,
+    SpectralForestEngine,
+    SpectrumMiner,
+)
+from ..forest.predictor import compute_reference_scaler_bounds
 from ..postprocess import ResultsWrapper
 from ..utils import REPO_ROOT, ensure_dir
 
 
+def _is_enabled(flag: t.Any) -> bool:
+    if isinstance(flag, str):
+        return flag.strip().upper() in {"YES", "Y", "TRUE", "1"}
+    return bool(flag)
+
+
 class ValidatePipeline(object):
-    def __init__(self, args, testing=False):
+    def __init__(self, args, testing: bool = False) -> None:
         self.args = args
         self.pypath = str(REPO_ROOT)
         self.testing = testing
+        self.model_path = getattr(args, "model", None) or DEFAULT_MODEL_PATH
+        self._shared_bounds: t.Optional[tuple[np.ndarray, np.ndarray]] = None
+        self._bounds_computed: bool = False
 
-    def validate_genome(self):
-        ensure_dir("Genome/Percolator/for_predicting")
+    def _get_experiment_reference_bounds(
+        self,
+    ) -> t.Optional[tuple[np.ndarray, np.ndarray]]:
+        if self._bounds_computed:
+            return self._shared_bounds
+        self._bounds_computed = True
 
-        genome_pin = ProteinFixer(pin_folder='Genome/Percolator')
-        genome_pin.fix_files(outdir='Genome/Percolator')
-        genome_prefiltering = PreFiltering(pin_folder='Genome/Percolator',
-                                           results_04='Genome/post_perc/genome_results_04.txt', testing=self.testing)
-        genome_prefiltering.filter_proteins()
-        genome_prefiltering.filter_pin_files('Genome/Percolator/for_predicting')
-        genome_fishing = FeatureFishing(results='Genome/post_perc/genome_results_04.txt',
-                                        pin_folder='Genome/Percolator/for_predicting',
-                                        testing=self.testing)
-        genome_fishing.add_features()
-        genome_fishing.save_table('Genome/Percolator/for_predicting/genome_results_with_features.txt')
+        engine = SpectralForestEngine.load(self.model_path)
+        if engine.scaling != "minmax":
+            self._shared_bounds = None
+            return None
 
-        genome_sf = SpectralForest(model_pickle=f'{self.pypath}/src/model/model.pkl',
-                                   results='Genome/Percolator/for_predicting/genome_results_with_features.txt')
-        genome_sf.predict()
-        ensure_dir('Genome/predicted')
-        genome_sf.save('Genome/predicted/genome_predicted.txt')
-        genome_mining = SpectrumMiner(predicted='Genome/predicted/genome_predicted.txt',
-                                      results='Genome/post_perc/genome_results_04.txt', testing=self.testing)
-        genome_mining.filter_results('Genome/post_perc/genome_results_05.txt')
-        genome_mining.add_lc_spectra_for_hc_orf(filetype='genome', folder='Genome')
-        genome_results = ResultsWrapper(df='Genome/post_perc/genome_results_05.txt', folder='Genome', filetype='genome')
-        genome_results.reformat(pre_validation=False)
+        pin_candidates: list[pathlib.Path] = []
+        folders = ["Genome"]
+        if _is_enabled(getattr(self.args, "transcriptome", False)):
+            folders.append("Transcriptome")
 
-    def validate_transcriptome(self):
-        if self.args.transcriptome:
-            ensure_dir('Transcriptome/Percolator/for_predicting')
-            transcriptome_pin = ProteinFixer(pin_folder='Transcriptome/Percolator')
-            transcriptome_pin.fix_files(outdir='Transcriptome/Percolator')
-            transcriptome_prefiltering = PreFiltering(pin_folder='Transcriptome/Percolator',
-                                                      results_04='Transcriptome/post_perc/transcriptome_results_04.txt',
-                                                      testing=self.testing)
-            transcriptome_prefiltering.filter_proteins()
+        for folder in folders:
+            perc_dir = pathlib.Path(folder) / "Percolator"
+            if not perc_dir.is_dir():
+                continue
+            fixed_files = ProteinFixer(pin_folder=perc_dir).fix_files(outdir=perc_dir)
+            pin_candidates.extend(fixed_files)
 
-            transcriptome_prefiltering.filter_pin_files('Transcriptome/Percolator/for_predicting')
-            transcriptome_fishing = FeatureFishing(results='Transcriptome/post_perc/transcriptome_results_04.txt',
-                                                   pin_folder='Transcriptome/Percolator/for_predicting', testing=self.testing)
-            transcriptome_fishing.add_features()
-            transcriptome_fishing.save_table(
-                'Transcriptome/Percolator/for_predicting/transcriptome_results_with_features.txt')
+        self._shared_bounds = compute_reference_scaler_bounds(
+            pin_candidates,
+            feature_names=engine.feature_names,
+            fallback_bounds=engine.default_scaler_bounds,
+        )
+        return self._shared_bounds
 
-            transcriptome_sf = SpectralForest(model_pickle=f'{self.pypath}/src/model/model.pkl',
-                                              results='Transcriptome/Percolator/for_predicting/transcriptome_results_with_features.txt')
-            transcriptome_sf.predict()
-            ensure_dir('Transcriptome/predicted')
-            transcriptome_sf.save('Transcriptome/predicted/transcriptome_predicted.txt')
-            transcriptome_mining = SpectrumMiner(predicted='Transcriptome/predicted/transcriptome_predicted.txt',
-                                                 results='Transcriptome/post_perc/transcriptome_results_04.txt',
-                                                 testing=self.testing)
-            transcriptome_mining.filter_results('Transcriptome/post_perc/transcriptome_results_05.txt')
-            transcriptome_mining.add_lc_spectra_for_hc_orf(filetype='transcriptome', folder='Transcriptome')
-            transcriptome_results = ResultsWrapper(df='Transcriptome/post_perc/transcriptome_results_05.txt',
-                                                   folder='Transcriptome', filetype='transcriptome')
-            transcriptome_results.reformat(pre_validation=False)
+    def _run_subset(self, folder: str, filetype: str) -> None:
+        for_pred_dir = ensure_dir(f"{folder}/Percolator/for_predicting")
+        filtered_dir = ensure_dir(f"{folder}/Percolator/for_predicting/filtered")
+
+        fixer = ProteinFixer(pin_folder=f"{folder}/Percolator")
+        fixer.fix_files(outdir=f"{folder}/Percolator")
+
+        bounds = self._get_experiment_reference_bounds()
+
+        results_04 = f"{folder}/post_perc/{filetype}_results_04.txt"
+        prefiltering = PreFiltering(
+            pin_folder=str(for_pred_dir),
+            results_04=results_04,
+            testing=self.testing,
+        )
+        prefiltering.filter_proteins()
+        prefiltering.filter_pin_files(filtered_dir)
+
+        fishing = FeatureFishing(
+            results=results_04,
+            pin_folder=str(filtered_dir),
+            testing=self.testing,
+        )
+        fishing.add_features()
+        features_path = f"{folder}/Percolator/for_predicting/{filetype}_results_with_features.txt"
+        fishing.save_table(features_path)
+
+        forest = SpectralForest(
+            model_pickle=self.model_path,
+            results=features_path,
+            reference_bounds=bounds,
+        )
+        forest.predict()
+        ensure_dir(f"{folder}/predicted")
+        predicted_path = f"{folder}/predicted/{filetype}_predicted.txt"
+        forest.save(predicted_path)
+
+        mining = SpectrumMiner(
+            predicted=predicted_path,
+            results=results_04,
+            testing=self.testing,
+        )
+        results_05 = f"{folder}/post_perc/{filetype}_results_05.txt"
+        mining.filter_results(results_05)
+        rescued_results = mining.add_lc_spectra_for_hc_orf(
+            filetype=filetype, folder=folder
+        )
+
+        wrapper = ResultsWrapper(
+            df=rescued_results,
+            folder=folder,
+            filetype=filetype,
+        )
+        wrapper.reformat(pre_validation=False)
+
+    def validate_genome(self) -> None:
+        self._run_subset(folder="Genome", filetype="genome")
+
+    def validate_transcriptome(self) -> None:
+        if _is_enabled(getattr(self.args, "transcriptome", False)):
+            self._run_subset(folder="Transcriptome", filetype="transcriptome")

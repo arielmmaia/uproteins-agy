@@ -16,49 +16,53 @@
 # You should have received a copy of the GNU General Public License along with
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
+"""Normalize ragged tab-delimited Proteins columns in Percolator PIN files."""
 
-import pandas as pd
+from __future__ import annotations
+
 import os
+import pathlib
 
 
 class ProteinFixer(object):
-    def __init__(self, pin_folder):
-        self.folder = pin_folder
-        self.files = [f'{pin_folder}/{file}' for file in os.listdir(self.folder)]
+    def __init__(self, pin_folder: str | os.PathLike[str]) -> None:
+        self.folder = str(pin_folder)
+        self.files = sorted(
+            str(entry)
+            for entry in pathlib.Path(self.folder).iterdir()
+            if entry.is_file()
+        )
 
-        # self.done = [f'{pin_folder}/fixed{file}' for file in os.listdir(f'{self.folder}/fixed')]
+    def fix_files(self, outdir: str | os.PathLike[str]) -> list[pathlib.Path]:
+        target_dir = pathlib.Path(outdir) / "for_predicting"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        written: list[pathlib.Path] = []
 
-    def fix_files(self, outdir):
         for file in self.files:
-            filename = file.split("/")
+            basename = os.path.basename(file)
+            lower_name = basename.lower()
+            if lower_name.startswith(("fixed_", "filtered_")):
+                continue
+            if "pin" not in lower_name and "pep_results" not in lower_name:
+                continue
 
-            # if 'pin' in file and f'{outdir}/fixed_{filename[len(filename)-1]}' not in self.done:
-            if 'pin' in file or 'pep_results' in file:
+            out_path = target_dir / f"fixed_{basename}"
+            with open(file, "r", encoding="utf-8") as unfixed, open(
+                out_path, "w", encoding="utf-8"
+            ) as out:
+                proteins_col: int | None = None
+                for line in unfixed:
+                    if "DefaultDirection" in line or line.startswith("Default"):
+                        continue
+                    stripped = line.rstrip("\r\n")
+                    if not stripped:
+                        continue
+                    cols = stripped.split("\t")
+                    if proteins_col is None:
+                        proteins_col = len(cols) - 1
+                    new_proteins = ",".join(cols[proteins_col:])
+                    new_line = "\t".join(cols[:proteins_col]) + "\t" + new_proteins + "\n"
+                    out.write(new_line)
+            written.append(out_path)
 
-                print(file)
-                with open(file, 'r') as unfixed, open(f'{outdir}/for_predicting/fixed_{filename[len(filename)-1]}', 'w') as out:
-                    lines = unfixed.readlines()
-                    i = 0
-                    new_lines = []
-                    for line in lines:
-                        if 'Default' not in line:
-
-                            cols = line.split("\t")
-                            if i == 0:
-                                proteins_col = len(cols) - 1
-                            i += 1
-                            if len(cols) > proteins_col + 1:
-                                new_proteins = ','.join(cols[proteins_col:])
-                            else:
-                                new_proteins = ','.join(cols[proteins_col:])
-                            new_line = '\t'.join(cols[:proteins_col])+'\t'
-                            new_line += new_proteins
-                            new_lines.append(new_line)
-                            # new_lines.append(new_proteins)
-                    out.writelines(new_lines)
-
-
-if __name__ == '__main__':
-    folder = 'uproteins_results_1608/tofix'
-    data = ProteinFixer(pin_folder=folder)
-    data.fix_files(outdir='uproteins_results_1608')
+        return written

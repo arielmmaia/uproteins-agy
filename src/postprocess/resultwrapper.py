@@ -174,6 +174,7 @@ class ResultsWrapper(object):
                     "Extended Coordinates",
                     "Extended Genomic Coordinates",
                     "Genome Coordinates",
+                    "RenamedFiles",
                 )
                 if c in self.df.columns
             ]
@@ -201,6 +202,7 @@ class ResultsWrapper(object):
                     "Extended ORF",
                     "Genome Coordinates",
                     "Extended Genomic Coordinates",
+                    "RenamedFiles",
                 )
                 if c in self.df.columns
             ]
@@ -217,6 +219,24 @@ class ResultsWrapper(object):
                 out_df = out_df.rename(columns={"Extended Sequence": "Protein sequence"})
                 insert_pos = min(4, len(out_df.columns))
                 out_df.insert(insert_pos, "Genome Coordinates", norm_ext_coords)
+
+        # Unify display ORF name when distinct unextended ORFs collapsed onto the identical extended locus
+        if (
+            new_names
+            and "Protein sequence" in out_df.columns
+            and "Genome Coordinates" in out_df.columns
+        ):
+            canonical_by_locus: dict[tuple[str, str], str] = {}
+            unified_names: list[str] = []
+            for nm, seq_val, coord_val in zip(
+                new_names,
+                out_df["Protein sequence"].astype(str),
+                out_df["Genome Coordinates"].astype(str),
+            ):
+                key = (seq_val, coord_val)
+                canonical_by_locus.setdefault(key, nm)
+                unified_names.append(canonical_by_locus[key])
+            new_names = unified_names
 
         name_pos = min(1, len(out_df.columns))
         out_df.insert(name_pos, "ORF name", new_names)
