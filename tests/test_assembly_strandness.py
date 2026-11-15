@@ -89,16 +89,14 @@ def test_read_mapper_passes_single_end_r_and_unstranded_to_hisat2(tmp_path, monk
     fake_hisat.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     fake_hisat.chmod(fake_hisat.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("UPROTEINS_HISAT2", str(fake_hisat))
+    monkeypatch.setenv("UPROTEINS_SAMTOOLS", str(fake_hisat))
 
     recorded_hisat: list[list[str]] = []
 
-    def fake_run(cmd, *args, **kwargs):
-        recorded_hisat.append(list(cmd))
-        # Create dummy SAM so unlink doesn't fail if _sort_alignment ran
-        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+    def fake_stream(cmd_hisat, cmd_sort):
+        recorded_hisat.append(list(cmd_hisat))
 
-    monkeypatch.setattr("src.assembly.subprocess.run", fake_run)
-    monkeypatch.setattr(ReadMapper, "_sort_alignment", lambda self, name: self)
+    monkeypatch.setattr(ReadMapper, "_stream_align_and_sort", staticmethod(fake_stream))
 
     for strand in (None, "R", "F"):
         recorded_hisat.clear()
