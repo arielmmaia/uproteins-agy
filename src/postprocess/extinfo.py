@@ -92,10 +92,10 @@ class ExtendedInformation(object):
             k += 1
             print(k, len(self.alternatives), end='\r')
             real_stop = self.alternatives[stop].priority.end
-            df = dfdf[dfdf["Protein"].str.contains(str(real_stop), na=False)]
+            df = dfdf[dfdf["Protein"].str.contains(str(real_stop), regex=False, na=False)]
             priority = self.alternatives[stop].priority
             for alt in self.alternatives[stop]:
-                ndf = df[df["Protein"].str.contains(alt.name, na=False)]
+                ndf = df[df["Protein"].str.contains(alt.name, regex=False, na=False)]
                 frames.append(ndf)
                 prots = ndf["Protein"].tolist()
                 for _ in prots:

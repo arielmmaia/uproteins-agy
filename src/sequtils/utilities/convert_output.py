@@ -45,11 +45,11 @@ class FastaConverter(object):
             pattern = ""
         id_dict = {}
         df = pd.read_csv(self.cFile, sep=sep)
-        df = df[df["To"].str.contains(pattern)]
+        df = df[df["To"].str.contains(pattern, regex=False, na=False)]
         ids = df["From"].tolist()
         target = df["To"].tolist()
         for i in range(len(ids)):
-            gff = self.gff[self.gff["attributes"].str.contains(target[i])]
+            gff = self.gff[self.gff["attributes"].str.contains(target[i], regex=False, na=False)]
             if len(gff["attributes"].tolist()) > 0:
                 attrs = gff["attributes"].tolist()[0]
                 gene_name = attrs.split(";")
