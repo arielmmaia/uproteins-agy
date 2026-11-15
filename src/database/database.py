@@ -27,21 +27,40 @@ class Database(object):
         self.genome = args.genome
 
     def translate(self):
+        circular = getattr(self.args, "circular", True)
+        genetic_code = getattr(self.args, "genetic_code", 11)
         if self.args.transcriptome:
-            rna = TranscriptomeTranslator(sequence="HISAT/transcripts.fasta", form='fasta',
-                                                 minsize=int(self.args.minsize), maxsize=int(self.args.maxsize))
-            # records = SeqIO.parse("HISAT/transcripts.fasta", 'fasta')
-            # for record in records:
-            #     print(record.seq)
-            rna_orfs = rna.parse_frames(starts=self.args.starts, stops=self.args.stops, seqtype='aa', entry='full')
+            rna = TranscriptomeTranslator(
+                sequence="HISAT/transcripts.fasta",
+                form='fasta',
+                minsize=int(self.args.minsize),
+                maxsize=int(self.args.maxsize),
+                circular=False,
+                genetic_code=genetic_code,
+            )
+            rna_orfs = rna.parse_frames(
+                starts=self.args.starts,
+                stops=self.args.stops,
+                seqtype='aa',
+                entry='full',
+            )
 
             db = DatabaseGenerator(name="transcriptome", db_type="sql")
             db.add_orfs(rna_orfs)
             db.to_fasta(filename="transcriptome_ORFs.fasta", identifier='t')
-        dna = GenomeTranslator(sequence=self.args.genome, form='fasta', minsize=int(self.args.minsize),
-                                      maxsize=int(self.args.maxsize))
-        dna_orfs = dna.parse_frames(starts=self.args.starts, stops=self.args.stops,
-                                    seqtype='aa')
+        dna = GenomeTranslator(
+            sequence=self.args.genome,
+            form='fasta',
+            minsize=int(self.args.minsize),
+            maxsize=int(self.args.maxsize),
+            circular=circular,
+            genetic_code=genetic_code,
+        )
+        dna_orfs = dna.parse_frames(
+            starts=self.args.starts,
+            stops=self.args.stops,
+            seqtype='aa',
+        )
         genome_db = DatabaseGenerator(name="genome", db_type="sql")
         genome_db.add_orfs(dna_orfs)
         genome_db.to_fasta(filename="genome_ORFs.fasta", identifier='g')
