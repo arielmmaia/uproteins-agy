@@ -21,7 +21,9 @@
 import argparse
 import os
 import sys
+import typing as t
 
+from src import cli
 from src.cli import validators
 from src.database import database_generator as dg
 from src import peptide_search as ps
@@ -37,6 +39,19 @@ from src.metrics import Metrics
 
 
 pypath = sys.path[0]
+
+
+def uproteins(args: t.Optional[t.Sequence[str]] = None):
+    try:
+        from pyfiglet import Figlet
+        f = Figlet()
+        print(f.renderText('uProteInS'))
+    except ModuleNotFoundError:
+        print('uProteInS')
+
+    parser, subparsers = cli.get_parsers()
+    args_namespace = parser.parse_args(args)
+    run_workflow(args_namespace, subparsers[args_namespace.mode])
 
 
 def run_workflow(

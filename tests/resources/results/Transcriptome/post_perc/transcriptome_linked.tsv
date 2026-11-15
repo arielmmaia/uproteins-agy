@@ -1,0 +1,2 @@
+#SpecFile	SpecID	ScanNum	FragMethod	Precursor	IsotopeError	PrecursorError(ppm)	Charge	Peptide	Protein	DeNovoScore	MSGFScore	SpecEValue	EValue
+run1.mzML	index=1	100	HCD	500.25	0	1.2	2	-.MPEPTIDER.K	Transcriptome_uproteins.1.1_ORF_1_15-62+(pre=-,post=K)	80	95	1e-10	1e-7

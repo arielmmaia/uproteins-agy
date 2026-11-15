@@ -19,6 +19,7 @@
 
 
 import pathlib
+import shutil
 from importlib import resources as rsrc
 
 import pandas as pd
@@ -28,8 +29,15 @@ from src import uproteins
 from tests import resources
 
 
-# Since the validate method requires a venv, it is not being run at the moment
+_FULLRUN_BINS = ("hisat2", "samtools", "stringtie", "gffcompare", "gffread", "msgf2pin", "percolator")
+_MISSING_FULLRUN = [b for b in _FULLRUN_BINS if shutil.which(b) is None]
+
+
 @pytest.mark.fullrun
+@pytest.mark.skipif(
+    bool(_MISSING_FULLRUN),
+    reason=f"Requires external bioinformatics binaries on PATH: {', '.join(_MISSING_FULLRUN)}",
+)
 def test_full_run(tmp_path):
     genome = rsrc.files(resources).joinpath("genome.fasta")
     proteome = rsrc.files(resources).joinpath("proteome.fasta")
@@ -190,6 +198,10 @@ def test_full_run(tmp_path):
 
 
 @pytest.mark.fullrun
+@pytest.mark.skipif(
+    bool(_MISSING_FULLRUN),
+    reason=f"Requires external bioinformatics binaries on PATH: {', '.join(_MISSING_FULLRUN)}",
+)
 def test_external_assembly(tmp_path):
     assembled = rsrc.files(resources).joinpath("assembled.gtf")
     transcripts = rsrc.files(resources).joinpath("transcripts.fasta")

@@ -638,10 +638,7 @@ class Results(object):
         columns = []
         indexes = []
         rna_entries = []
-        new_df = pd.DataFrame()
-        new_df = new_df.append(genome_df, ignore_index=True)
-        new_df = new_df.append(rna_df, ignore_index=True)
-        # genome_df.append(rna_df)
+        new_df = pd.concat([genome_df, rna_df], ignore_index=True)
         new_df.to_csv("Genome/Results/both_summarized_final_results.xlsl", sep="\t", index=False)
 
         # for i in tqdm(range(len(rna_names))):

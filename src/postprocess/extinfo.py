@@ -80,66 +80,32 @@ class ExtendedInformation(object):
 
     def extract_spectra(self):
         print('extracting spectra')
-        new_df = pd.DataFrame(columns=self.results.columns)
-        # new_df.insert(3, "Extended ORF", [])
+        frames = []
         extended = []
         ext_seqs = []
         energies = []
         coordinates = []
         sds = []
         dfdf = self.results.drop_duplicates(subset=["SpecFile", "ScanNum"], keep='last')
-        # chunk_size = 10**6
         k = 0
         for stop in self.alternatives:
             k += 1
-            # print(stop)
-            # print(self.alternatives[stop])
             print(k, len(self.alternatives), end='\r')
-            # df = dfdf[dfdf["Genome Coordinates"].str.contains(str(stop))]
-            # if type(stop) == str:
-            #     new_stop = stop.split("_")
-            #     if len(new_stop) > 1:
-            #         real_stop = new_stop[1]
-            # else:
-            #     real_stop = stop
-            # for alt in self.alternatives[stop]:
-            #     real_stop = alt.end
-            #     break
             real_stop = self.alternatives[stop].priority.end
-            df = dfdf[dfdf["Protein"].str.contains(str(real_stop))]
-            # df = df.drop_duplicates(subset=["SpecFile", "ScanNum"], keep='last')
-            # fixed_pep = df["Fixed Peptides"].tolist()
+            df = dfdf[dfdf["Protein"].str.contains(str(real_stop), na=False)]
             priority = self.alternatives[stop].priority
             for alt in self.alternatives[stop]:
-                ndf = df[df["Protein"].str.contains(alt.name)]
-                new_df = new_df.append(ndf)
+                ndf = df[df["Protein"].str.contains(alt.name, na=False)]
+                frames.append(ndf)
                 prots = ndf["Protein"].tolist()
-                for prot in prots:
+                for _ in prots:
                     priority_coords = f'{priority.start}-{priority.end}'
                     extended.append(priority.name)
                     ext_seqs.append(priority.proteinSequence)
                     energies.append(priority.freeEnergy)
                     sds.append(priority.shineDalgarno)
                     coordinates.append(priority_coords)
-                # print(alt.name)
-                # for pep in fixed_pep:
-                #     print('pep', pep)
-                #     # print(pep)
-                #     # df = self.results[self.results["Fixed Peptides"].isin(alt.proteinSequence)]
-                #     ndf = df[df["ORF Sequence"].str.contains(pep)]
-                #     peps = ndf["Fixed Peptides"].tolist()
-                #     # print('ndf', ndf)
-                #     # print('peps', peps)
-                #     # extended = [alt.name for pep in peps]
-                #     for pep in peps:
-                #         extended.append(alt.name)
-                #         ext_seqs.append(alt.proteinSequence)
-                #         energies.append(alt.freeEnergy)
-                #         sds.append(alt.shineDalgarno)
-                #     # if i == 0:
-                #     # ndf.insert(3, "Extended ORF", extended)
-                #     # i += 1
-                # new_df = new_df.append(ndf)
+        new_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=self.results.columns)
         new_df.insert(3, "Extended ORF", extended)
         new_df.insert(4, "Extended Sequence", ext_seqs)
         new_df.insert(5, "Free Energy", energies)

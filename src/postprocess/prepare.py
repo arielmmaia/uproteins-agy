@@ -43,18 +43,20 @@ class ForestCleaning(object):
         chunk_size = 10**6
         j = 0
         identifiers = []  # holds spectrum information across multiple files
+        frames = []
+        default_cols = None
         for i in range(len(files)):
             for chunk in pd.read_csv(self.pinFile, sep='\t', chunksize=chunk_size):
-                df = chunk[chunk["SpecId"].str.contains(files[i][:-5])]  # ignores the '.mzML' suffix when comparing
-                df = df[df["ScanNr"] == spec_num[i]]
-                if j == 0:
-                    new_df = pd.DataFrame(columns=chunk.columns)
-                    new_df.insert(2, "Identifier", [])
+                if default_cols is None:
+                    default_cols = list(chunk.columns)
+                    default_cols.insert(2, "Identifier")
+                df = chunk[chunk["SpecId"].str.contains(files[i][:-5], na=False)]  # ignores the '.mzML' suffix when comparing
+                df = df[df["ScanNr"] == spec_num[i]].copy()
                 identifiers.append(f'spec {j}')
                 ids, j = self.__add_identifiers(df, j)
                 df.insert(2, "Identifier", ids)
-                new_df = new_df.append(df)
-        self.output = new_df
+                frames.append(df)
+        self.output = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=default_cols or [])
 
     def __create_directory(self):
         if not os.path.exists(self.MLFolder):
