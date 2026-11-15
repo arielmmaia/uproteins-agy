@@ -79,7 +79,10 @@ class ExtendedInformation(object):
             if priority is None:
                 continue
 
-            alt_names = {alt.name for alt in collection if getattr(alt, "name", None)}
+            source_names = set(getattr(collection, "source_protein_names", None) or ())
+            alt_names = source_names | {
+                alt.name for alt in collection if getattr(alt, "name", None)
+            }
             if not alt_names:
                 continue
 
