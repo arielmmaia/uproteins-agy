@@ -101,6 +101,7 @@ def run_workflow(
                 pathlib.Path(args.external_transcriptome),
                 outdir_path / 'HISAT' / 'transcripts.fasta',
             )
+            args.transcriptome = True
         elif args.external_gtf is not None and args.external_transcriptome is None:
             raise ExternalAssemblyError
         elif args.external_transcriptome is not None and args.external_gtf is None:
