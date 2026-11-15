@@ -41,8 +41,9 @@ class PreFiltering(object):
                 self.proteins.append(prot)
 
     def filter_pin_files(self, outdir):
-        if not os.path.exists(outdir):
-            os.system(f'mkdir {outdir}')
+        import pathlib
+
+        pathlib.Path(outdir).mkdir(parents=True, exist_ok=True)
         i = 0
         for file in self.pinFiles:
             if 'fixed' in file and 'pin' in file:

@@ -18,9 +18,7 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-import sys
 import os
-import subprocess
 
 from Bio import SeqIO
 import pandas as pd
@@ -28,6 +26,7 @@ import pandas as pd
 from ..sequtils.orflib import ORF, ORFCollection
 from ..sequtils.locus import StringTieGFF
 from ..sequtils.transcriptomics import TranscriptExtractor
+from ..utils import REPO_ROOT, resolve_executable, resolve_free2bind_script, run_cmd
 
 
 class SDInspection(object):
@@ -40,6 +39,7 @@ class SDInspection(object):
         :param alternatives: the dictionary containing alternative START codons for a given STOP codon, after extending
         it with AltORF method extend_orfs(), preferably.
         """
+        self.args = args
         self.subset = subset
         self.tORFs = {}
         self.testing = testing
@@ -47,20 +47,25 @@ class SDInspection(object):
         self.rRNA = self.__get_sequences(args.rrna)[::-1][:13]  # one of the RNA strings must be 3'-5'.
         self.filetype = filetype
         self.folder = folder
-        # self.results = pd.read_csv(f'{folder}/post_perc/{filetype}_results_02.txt', sep='\t')
-        # self.coordinates = self.results["Genome Coordinates"].tolist()
-        # self.entries = self.results["Protein"].tolist()
         self.genome = self.__get_sequences(args.genome)
-        # self.upstreamSequences = self.__extract_upstream()
-        self.pyPath = sys.path[0]
-        self.freeAlignPath = f'{self.pyPath}/dependencies/free2bind/free_align.pl'
+        self.pyPath = str(REPO_ROOT)
+        self.freeAlignPath = None
 
         self.alternatives = alternatives
         self.alternatives = self.__extract_upstream()
 
-    # def __check_testing(self):
-    #     if self.testing:
-    #         self.
+    def _run_free_align(self, upstream_seq: str) -> str:
+        if self.freeAlignPath is None:
+            self.freeAlignPath = resolve_free2bind_script(
+                getattr(self.args, 'free2bind_dir', None)
+            )
+        perl_bin = resolve_executable(None, 'perl', env_var='UPROTEINS_PERL')
+        res = run_cmd(
+            [str(perl_bin), str(self.freeAlignPath), '-e', str(upstream_seq), str(self.rRNA)],
+            capture_output=True,
+            text=True,
+        )
+        return res.stdout.strip()
 
     def __get_transcripts(self, transcriptome_gff, assembly):
         """
@@ -75,7 +80,6 @@ class SDInspection(object):
             torfs = gff.get_dict()
             sequences = TranscriptExtractor(assembly=assembly)
             transcripts = sequences.get_transcripts()
-                        # self.transcripts = transcripts
             for i in torfs:
                 orf = torfs[i]
                 if 'gene' in orf.name:
@@ -84,7 +88,6 @@ class SDInspection(object):
                     name = orf.name[4:]
                 else:
                     splat = orf.name.split(".")
-                    # name = f'{splat[0]}.{splat[1]}'
                     name = '.'.join(splat[:2])
                 orf.transcript = transcripts[name]
                 self.tORFs[orf.name] = orf
@@ -111,7 +114,6 @@ class SDInspection(object):
             elif 'reverse' in entry:
                 start = int(splat_coords[1])
                 upstream = self.__complement(self.genome[start: start+22][::-1])
-                # print(coords, upstream)
                 upstream_seqs.append(upstream)
         return upstream_seqs
 
@@ -122,13 +124,7 @@ class SDInspection(object):
         """
         upstream_seqs = {}
         for stop in self.alternatives:
-            # print(stop)
-            # print(self.alternatives[stop])
-            # print([alt.name for alt in self.alternatives[stop]])
-            # print(self.alternatives[stop])
             for alt in self.alternatives[stop]:
-                # if alt.name != "Discard":
-                    # print(alt.name, alt.strand, alt.start)
                 if alt.strand == 'forward':
                     if self.subset == "Genome":
                         upstream = self.genome[alt.start-22: alt.start]
@@ -146,7 +142,6 @@ class SDInspection(object):
                         upstream_seqs[str(alt.end)] = ORFCollection()
                         upstream_seqs[str(alt.end)].add_orf(alt)
                     elif str(alt.end) in upstream_seqs:
-                        # print(upstream_seqs[alt.end])
                         upstream_seqs[str(alt.end)].add_orf(alt)
                 elif self.subset == "Transcriptome":
                     identifier = f'{alt.transcriptName}_{alt.end}'
@@ -155,16 +150,6 @@ class SDInspection(object):
                         upstream_seqs[identifier].add_orf(alt)
                     elif identifier in upstream_seqs:
                         upstream_seqs[identifier].add_orf(alt)
-                # else:
-                #     if str(alt.end) in upstream_seqs:
-                #         upstream_seqs[str(alt.end)].add_orf(alt)
-                #     else:
-                #         upstream_seqs[str(alt.end)] = ORFCollection()
-                #         upstream_seqs[str(alt.end)].add_orf(alt)
-        # for stop in upstream_seqs:
-            # for orf in upstream_seqs[stop]:
-            #     print('upstream', orf.name, orf.strand, orf.end)
-            # print([('upstream', orf.name, orf.start, orf.end) for orf in upstream_seqs[stop]])
 
         return upstream_seqs
 
@@ -190,24 +175,12 @@ class SDInspection(object):
     def get_free_energy(self):
         alts = {}
         for stop in self.alternatives:
-            # print(stop)
-            # print(self.alternatives[stop])
-
             for alt in self.alternatives[stop]:
-                # if alt.name != "Discard":
-                # print(alt)
-                # print(alt.upstream)
                 if alt.upstream != '':
-
-                    cmd = f'{self.freeAlignPath} -e {alt.upstream} {self.rRNA}'
-                    energy = subprocess.check_output(cmd, shell=True).strip().rstrip()
-                    # print(energy)
+                    energy = self._run_free_align(alt.upstream)
                     alt.freeEnergy = float(energy)
                     sd_seq = self.__check_rbs(energy)
                     alt.shineDalgarno = sd_seq
-                    # else:
-                    #     alt.freeEnergy = 0
-                    #     alt.shineDalgarno = "Absent"
                 else:
                     alt.freeEnergy = 0
                     alt.shineDalgarno = self.__check_rbs(0)
@@ -217,11 +190,6 @@ class SDInspection(object):
                     alts[identifier].add_orf(alt)
                 else:
                     alts[identifier].add_orf(alt)
-        # for alt in alts:
-        #     for orf in alts[alt]:
-        #         if orf.name != "Discard":
-        #         print(orf.name, orf.start, orf.end)
-        #             print(orf.freeEnergy, orf.shineDalgarno)
         return alts
 
     def get_free_energy_old(self):
@@ -231,8 +199,7 @@ class SDInspection(object):
         energies = []
         sd = []
         for upstream_seq in self.upstreamSequences:
-            cmd = f'{self.freeAlignPath} -e {upstream_seq} {self.rRNA}'
-            energy = subprocess.check_output(cmd, shell=True).strip().rstrip()
+            energy = self._run_free_align(upstream_seq)
             energies.append(f'{energy}')
             sd_seq = self.__check_rbs(energy)
             sd.append(sd_seq)

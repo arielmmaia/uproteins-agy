@@ -17,22 +17,19 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-import os
-import sys
-
 from ..forest import ProteinFixer, PreFiltering, FeatureFishing, SpectralForest, SpectrumMiner
 from ..postprocess import ResultsWrapper
+from ..utils import REPO_ROOT, ensure_dir
 
 
 class ValidatePipeline(object):
     def __init__(self, args, testing=False):
         self.args = args
-        self.pypath = sys.path[0]
+        self.pypath = str(REPO_ROOT)
         self.testing = testing
 
     def validate_genome(self):
-        if not os.path.exists("Genome/Percolator/for_predicting"):
-            os.mkdir('Genome/Percolator/for_predicting')
+        ensure_dir("Genome/Percolator/for_predicting")
 
         genome_pin = ProteinFixer(pin_folder='Genome/Percolator')
         genome_pin.fix_files(outdir='Genome/Percolator')
@@ -49,8 +46,7 @@ class ValidatePipeline(object):
         genome_sf = SpectralForest(model_pickle=f'{self.pypath}/src/model/model.pkl',
                                    results='Genome/Percolator/for_predicting/genome_results_with_features.txt')
         genome_sf.predict()
-        if not os.path.exists('Genome/predicted'):
-            os.system('mkdir Genome/predicted')
+        ensure_dir('Genome/predicted')
         genome_sf.save('Genome/predicted/genome_predicted.txt')
         genome_mining = SpectrumMiner(predicted='Genome/predicted/genome_predicted.txt',
                                       results='Genome/post_perc/genome_results_04.txt', testing=self.testing)
@@ -61,8 +57,7 @@ class ValidatePipeline(object):
 
     def validate_transcriptome(self):
         if self.args.transcriptome:
-            if not os.path.exists('Transcriptome/Percolator/for_predicting'):
-                os.system('mkdir Transcriptome/Percolator/for_predicting')
+            ensure_dir('Transcriptome/Percolator/for_predicting')
             transcriptome_pin = ProteinFixer(pin_folder='Transcriptome/Percolator')
             transcriptome_pin.fix_files(outdir='Transcriptome/Percolator')
             transcriptome_prefiltering = PreFiltering(pin_folder='Transcriptome/Percolator',
@@ -80,8 +75,7 @@ class ValidatePipeline(object):
             transcriptome_sf = SpectralForest(model_pickle=f'{self.pypath}/src/model/model.pkl',
                                               results='Transcriptome/Percolator/for_predicting/transcriptome_results_with_features.txt')
             transcriptome_sf.predict()
-            if not os.path.exists('Transcriptome/predicted'):
-                os.system('mkdir Transcriptome/predicted')
+            ensure_dir('Transcriptome/predicted')
             transcriptome_sf.save('Transcriptome/predicted/transcriptome_predicted.txt')
             transcriptome_mining = SpectrumMiner(predicted='Transcriptome/predicted/transcriptome_predicted.txt',
                                                  results='Transcriptome/post_perc/transcriptome_results_04.txt',

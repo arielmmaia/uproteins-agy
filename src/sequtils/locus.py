@@ -62,6 +62,8 @@ class StringTieGFF(object):
         self._fix_header()
 
     def _fix_header(self):
+        import shutil
+
         with open(self.gff, 'r') as problemo, open('scapegoat.txt', 'w') as fixed_gff:
             fixed = []
             lines = problemo.readlines()
@@ -70,8 +72,8 @@ class StringTieGFF(object):
                     line = 'seqname\tsource\tfeature\tstart\tend\tscore\tstrand\tframe\tattributes\n'
                 fixed.append(line)
             fixed_gff.writelines(fixed)
-        os.system(f'mv {self.gff} gff_unfixed.gff')
-        os.system(f'mv scapegoat.txt {self.gff}')
+        shutil.move(str(self.gff), 'gff_unfixed.gff')
+        shutil.move('scapegoat.txt', str(self.gff))
 
     def __read_gff(self):
         df = pd.read_csv(self.gff, sep='\t', header=1)

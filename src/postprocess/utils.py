@@ -18,22 +18,26 @@
 
 
 import os
-import sys
+
+from ..utils import REPO_ROOT, build_mzid_to_tsv_cmd, ensure_dir, run_cmd
 
 
 class TSVConverter(object):
-    def __init__(self, folder):
-        self.path = sys.path[0]
+    def __init__(self, folder, args=None):
+        self.path = str(REPO_ROOT)
         self.folder = folder
+        self.args = args
 
     def convert_files(self):
-        if not os.path.exists(f'{self.folder}/tsv_msgf'):
-            cmd_dir = f'mkdir {self.folder}/tsv_msgf'
-            os.system(cmd_dir)
-        files = os.listdir(f'{self.folder}')
+        tsv_dir = ensure_dir(f'{self.folder}/tsv_msgf')
+        files = sorted(os.listdir(f'{self.folder}'))
+        msgf_jar = getattr(self.args, 'msgf_jar', None)
         for file in files:
             if '.mzid' in file:
-                cmd = f'java -cp {self.path}/dependencies/MSGF/MSGFPlus.jar edu.ucsd.msjava.ui.MzIDToTsv -i ' \
-                      f'{self.folder}/{file} -o {self.folder}/tsv_msgf/{file}.tsv -showQValue 1'
-                os.system(cmd)
+                cmd = build_mzid_to_tsv_cmd(
+                    f'{self.folder}/{file}',
+                    tsv_dir / f'{file}.tsv',
+                    msgf_jar=msgf_jar,
+                )
+                run_cmd(cmd)
         return self

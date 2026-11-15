@@ -17,7 +17,8 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-import os
+import pathlib
+import shutil
 import pandas as pd
 from Bio import SeqIO
 import numpy as np
@@ -25,6 +26,7 @@ import numpy as np
 from ..sequtils.postsearch import SequenceFinder, LinkData, TSVChunks
 from ..sequtils.utilities import PercolatorConverter
 from ..sequtils import StringTieGFF, GenomeCoordinates, RefSeqGFF, GenomeCoordinatesRNA, PercolatorUTP
+from ..utils import concat_files, ensure_dir
 
 
 class PostPercolator(object):
@@ -36,8 +38,7 @@ class PostPercolator(object):
         self.__check_dir()
 
     def __check_dir(self):
-        if not os.path.exists(f'{self.folder}/post_perc'):
-            os.system(f'mkdir {self.folder}/post_perc')
+        ensure_dir(f'{self.folder}/post_perc')
 
     def convert_output(self):
         """ Fix some inconsistencies. Pre-processing step. """
@@ -75,16 +76,17 @@ class PostPercolator(object):
     def unique_peptides(self):
         """ Remove non-unique peptides. Check uProteInS methods for unique peptide classification. """
         print("Removing non-unique peptides\n")
-        os.system(f'cp {self.percDir}/{self.filetype}_no_anno.txt {self.percDir}/{self.filetype}_utps.txt')
-        # unique = PercolatorUTP(coord_df=f'{self.percDir}/{self.filetype}_no_anno.txt', pep=self.args.pep,
-        #                        qvalue=self.args.qvalue)
-        # unique.get_utps().save_table(output=f'{self.percDir}/{self.filetype}_utps', keep='all')
+        shutil.copy2(
+            f'{self.percDir}/{self.filetype}_no_anno.txt',
+            f'{self.percDir}/{self.filetype}_utps.txt',
+        )
         return self
 
     def msgf_info(self):
         """ Adds MSGF info to percolator's output. """
         print('Adding MSGF info\n')
-        os.system(f'cat {self.folder}/tsv_msgf/*.tsv > {self.percDir}/{self.filetype}_search.tsv')
+        tsv_files = sorted(pathlib.Path(self.folder, 'tsv_msgf').glob('*.tsv'))
+        concat_files(tsv_files, f'{self.percDir}/{self.filetype}_search.tsv')
         if self.args.transcriptome and self.filetype == 'transcriptome':
             chunks = TSVChunks(folder='Transcriptome', filetype='transcriptome')
             chunks.filter_search()
@@ -185,7 +187,8 @@ class ProteinFDR(object):
 
     def __cat_protein_results(self):
         self.catProteinFile = f'{self.percDir}/{self.filetype}_cat_protein_results.txt'
-        os.system(f'cat {self.folder}/Percolator/*protein_results* > {self.catProteinFile}')
+        protein_files = sorted(pathlib.Path(self.folder, 'Percolator').glob('*protein_results*'))
+        concat_files(protein_files, self.catProteinFile)
         return self
 
     def protein_cutoff(self):

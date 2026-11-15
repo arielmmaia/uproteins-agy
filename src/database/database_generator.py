@@ -18,8 +18,9 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-import os
 from Bio import SeqIO
+
+from ..utils import concat_files
 
 
 class Database(object):
@@ -42,5 +43,7 @@ class Database(object):
         self.annotated = 'annotated.fasta'
 
     def unify(self):
-        cmd_cat = f'cat {self.orf_to_blast} {self.annotated} > {self.filetype}_database.fasta'
-        os.system(cmd_cat)
+        concat_files(
+            [self.orf_to_blast, self.annotated],
+            f'{self.filetype}_database.fasta',
+        )

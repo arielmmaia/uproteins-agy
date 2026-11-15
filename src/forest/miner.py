@@ -173,8 +173,9 @@ class SpectrumMiner(object):
 
     @staticmethod
     def __check_results_dir(folder):
-        if not os.path.exists(f"{folder}/Results"):
-            os.system(f'mkdir {folder}/Results')
+        import pathlib
+
+        pathlib.Path(folder, "Results").mkdir(parents=True, exist_ok=True)
 
 
 # data = SpectrumMiner(predicted='../for_predicting/predicted_pin_files.txt', results='Transcriptome/transcriptome_results_04.txt')

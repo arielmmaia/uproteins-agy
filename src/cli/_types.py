@@ -164,7 +164,20 @@ def Memory(val: str) -> str:
     return val
 
 
+def Probability(val: str) -> float:
+    """Parse a probability / FDR cutoff strictly within (0.0, 1.0]."""
+    import math
+
+    prob = float(val)
+    if math.isnan(prob) or math.isinf(prob) or prob <= 0.0 or prob > 1.0:
+        raise TypeError
+    return prob
+
+
 class YesOrNoBooleanAction(argparse.Action):
+    _TRUE_TOKENS = frozenset({'Y', 'YE', 'YES', 'TRUE'})
+    _FALSE_TOKENS = frozenset({'N', 'NO', 'FALSE'})
+
     def __init__(
         self,
         option_strings,
@@ -191,14 +204,15 @@ class YesOrNoBooleanAction(argparse.Action):
         )
 
     def __call__(self, parser, namespace, values, option_string=None):
-        if 'YES'.startswith(values.upper()):   # pyright: ignore
+        token = values.strip().upper() if isinstance(values, str) else ''
+        if token in self._TRUE_TOKENS:
             setattr(namespace, self.dest, True)
-        elif 'NO'.startswith(values.upper()):  # pyright: ignore
+        elif token in self._FALSE_TOKENS:
             setattr(namespace, self.dest, False)
         else:
             parser.error(
                 f"argument {self.option_strings[0]}: invalid choice: "
-                f"'{values}' (choose from 'YES','NO')"
+                f"'{values}' (choose from 'YES','NO','TRUE','FALSE')"
             )
 
 
