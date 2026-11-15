@@ -102,14 +102,19 @@ _assembly_parser.add_argument(
 )
 _assembly_parser.add_argument(
     "--threads",
-    help="Number of threads for samtools and stringtie to use.",
+    help="Number of threads for hisat2-build, hisat2, samtools, and stringtie to use.",
     type=_types.PositiveInt
+)
+_assembly_parser.add_argument(
+    "--allow_splicing",
+    action="store_true",
+    default=False,
+    help="Allow eukaryotic spliced alignments in HISAT2 (disabled by default for bacterial genomes).",
 )
 _assembly_parser.add_argument(
     '--memory',
     help="Maximum memory per thread for samtools sort to use.",
     type=_types.Memory
-
 )
 _assembly_parser.add_argument(
     "--gffcompare_path",

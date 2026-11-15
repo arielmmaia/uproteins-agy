@@ -66,6 +66,12 @@ def validate_assembly(
             'not allowed with arguments --reads1 and --reads2'
         )
 
+    if reads1_present and reads2_present and len(args.reads1) != len(args.reads2):
+        parser.error(
+            'arguments --reads1 and --reads2 must contain the same number '
+            f'of files (got {len(args.reads1)} vs {len(args.reads2)})'
+        )
+
     if args.strandness is not None:
         if single_present and args.strandness not in ('F', 'R'):
             parser.error(
