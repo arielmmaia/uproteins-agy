@@ -359,4 +359,108 @@ def test_contig_and_isoform_ids_preserved_and_unstranded_transcripts_6frame(
     assert st_dict["uproteins.10.2"].start == 50
 
 
+@pytest.mark.database
+def test_nested_non_atg_explosion_and_canonical_gtg_readthrough_protection(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Regression test (Issue #17):
+    1. Redundant internal start codons (short <6 aa before K/R or internal ATG after K/R)
+       do not duplicate nested sub-ORFs, while a downstream non-ATG start producing a
+       distinct >=6 aa N-terminal formyl-Met peptide IS preserved.
+    2. Internal non-ATG C-terminal sub-fragments of annotated _ANNO proteins are excluded.
+    3. Upstream readthrough across a canonical GTG-initiated _ANNO protein:
+       - Preceded immediately by K/R -> zero-upstream 'V...' canonical peptide is NOT emitted.
+       - Preceded by non-K/R upstream residues -> trimmed right after first canonical K/R,
+         retaining the genuine upstream-spanning N-terminal extension peptide.
+    """
+    from Bio import SeqIO
+
+    monkeypatch.chdir(tmp_path)
+
+    # Construct 4 loci on separate linear contigs:
+    # Locus 1 (novel_collapsed):
+    #   ATG AAA GTG CGC ATT AAA ATG GCT GCT GCT GCT GCT TAA
+    #   Maximal ORF = M K V R I K M A A A A A (12 aa).
+    #   Internal GTG (before R -> "MR", 2 aa), ATT (before K -> "MK", 2 aa), and internal ATG after K ("MAAAAA", already in max!)
+    #   must ALL collapse into the single maximal ORF!
+    locus1_dna = "ATGAAAGTGCGCATTAAAATGGCTGCTGCTGCTGCTTAA"
+
+    # Locus 2 (novel_distinct_nterm):
+    #   ATG AAA CGC GTG CCC GAA ACC ATC CGC GCT GCT TAA
+    #   Maximal ORF = M K R V P E T I R A A (11 aa, tryptic peptide "VPETIR").
+    #   Downstream GTG initiates M P E T I R A A (distinct 6-aa N-terminal Met peptide "MPETIR"!) -> both retained!
+    locus2_dna = "ATGAAACGCGTGCCCGAAACCATCCGCGCTGCTTAA"
+
+    # Locus 3 (cterm_of_long_anno):
+    #   Annotated 120-aa protein RvLong = "M" + ("G" * 105) + "K" + "VAETVLRQ" (total 115 aa > 100 aa).
+    #   On DNA, the C-terminal "VAETVLRQ" starts at an internal GTG ("GTGGCTGAAACCGTGCTGCGCCAATAA"):
+    #   Without CanonicalProteomeMatcher, GenomeTranslator translates internal GTG as "MAETVLRQ" (8 aa <= 100 aa)!
+    rv_long_prot = "M" + ("G" * 105) + "KVAETVLRQ"
+    locus3_dna = "ATG" + ("GGT" * 105) + "AAAGTG" + "GCTGAAACCGTGCTGCGCCAATAA"
+
+    # Locus 4a (false_readthrough_after_K):
+    #   Canonical small GTG-start protein RvGTG1 = "MAETVLRKLLQ" (encoded on DNA with GTG start!).
+    #   Upstream in-frame ATG CCC AAA (MPK) immediately precedes GTG:
+    #   Full readthrough would be "MPKVAETVLRKLLQ" -> trypsin cuts after K, creating FAKE "VAETVLR" with 0 upstream aa!
+    rv_gtg1_prot = "MAETVLRKLLQ"
+    locus4a_dna = "ATGCCCAAA" + "GTGGCTGAAACCGTGCTGCGCAAACTGCTGCAATAA"
+
+    # Locus 4b (true_spanning_extension):
+    #   Canonical small GTG-start protein RvGTG2 = "MAERKLLQWY" (GTG start).
+    #   Upstream in-frame ATG CCC GCT GCT (MPAA, no K/R before GTG!) reads through GTG:
+    #   Full readthrough "MPAAVAERKLLQWY" -> trimmed right after first canonical R -> "MPAAVAER" (8 aa)!
+    rv_gtg2_prot = "MAERKLLQWY"
+    locus4b_dna = "ATGCCCGCTGCT" + "GTGGCTGAACGCAAACTGCTGCAATGGTACTAA"
+
+    genome_fa = tmp_path / "h7_genome.fasta"
+    genome_fa.write_text(
+        f">c1\n{locus1_dna}\n"
+        f">c2\n{locus2_dna}\n"
+        f">c3\n{locus3_dna}\n"
+        f">c4a\n{locus4a_dna}\n"
+        f">c4b\n{locus4b_dna}\n"
+    )
+    proteome_fa = tmp_path / "h7_proteome.fasta"
+    proteome_fa.write_text(
+        f">RvLong\n{rv_long_prot}\n"
+        f">RvGTG1\n{rv_gtg1_prot}\n"
+        f">RvGTG2\n{rv_gtg2_prot}\n"
+    )
+
+    out_dir = tmp_path / "h7_out"
+    uproteins([
+        "database",
+        "-o", str(out_dir),
+        "--genome", str(genome_fa),
+        "--proteome", str(proteome_fa),
+        "--linear",
+    ])
+
+    g_orfs = [
+        r for r in SeqIO.parse(out_dir / "genome_ORFs.fasta", "fasta")
+        if "_forward" in r.id
+    ]
+    by_contig: dict[str, list[str]] = {}
+    for rec in g_orfs:
+        # gORF_{contig}_{num}_{start}-{end}_{strand}
+        contig = rec.id[len("gORF_") :].rsplit("_", 3)[0]
+        by_contig.setdefault(contig, []).append(str(rec.seq))
+
+    # 1. Locus 1: all nested starts collapsed into the single maximal ORF
+    assert by_contig.get("c1") == ["MKVRIKMAAAAA"]
+
+    # 2. Locus 2: maximal ORF + distinct N-terminal Met peptide ("MPETIR") retained
+    assert by_contig.get("c2") == ["MKRVPETIRAA", "MPETIRAA"]
+
+    # 3. Locus 3: C-terminal internal-GTG fragment "MAETVLRQ" of RvLong completely excluded
+    assert "MAETVLRQ" not in by_contig.get("c3", [])
+
+    # 4a. Locus 4a: K-preceded readthrough across canonical GTG start completely excluded (MPK is 3 aa < 6 aa)
+    assert by_contig.get("c4a", []) == []
+
+    # 4b. Locus 4b: non-KR upstream extension trimmed right after first canonical R -> "MPAAVAER"
+    assert by_contig.get("c4b") == ["MPAAVAER"]
+
+
+
 

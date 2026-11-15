@@ -24,6 +24,7 @@ from .conversion.complement import StrandConverter, normalize_dna
 from .orflib import ORF, ORFCollection
 from .transcriptomics.assembled import parse_gtf_transcript_strands
 from .__helpers import FormatError
+from ..database.proteome_matcher import n_terminal_tryptic_peptides, tryptic_peptides
 
 
 class FrameTranslator(object):
@@ -37,6 +38,7 @@ class FrameTranslator(object):
         circular=False,
         genetic_code=11,
         transcript_strands=None,
+        collapse_nested_starts=True,
     ):
         self.sequence = sequence
         self.form = form
@@ -46,6 +48,7 @@ class FrameTranslator(object):
         self.circular = bool(circular)
         self.genetic_code = int(genetic_code)
         self.transcript_strands = dict(transcript_strands) if transcript_strands else {}
+        self.collapse_nested_starts = bool(collapse_nested_starts)
         self.orfs = []
 
     def read_genome(self):
@@ -77,6 +80,7 @@ class FrameTranslator(object):
         start_set = {c.upper() for c in starts}
         stop_tuple = tuple(c.upper() for c in stops)
         stop_set = set(stop_tuple)
+        collapse_nested = kwargs.get("collapse_nested_starts", self.collapse_nested_starts)
 
         sequences = [str(s) for s in self.seqsToTranslate]
         if kwargs.get("entry") == "full":
@@ -92,6 +96,7 @@ class FrameTranslator(object):
             stop_tuple=stop_tuple,
             seqtype=seqtype,
             entries=entries,
+            collapse_nested=collapse_nested,
         )
         self.__add_orfs(forward_orfs)
 
@@ -106,11 +111,10 @@ class FrameTranslator(object):
                 stop_tuple=stop_tuple,
                 seqtype=seqtype,
                 entries=entries,
+                collapse_nested=collapse_nested,
             )
             self.__add_orfs(reverse_orfs)
         elif self.frames == 3 and self.transcript_strands:
-            # Unstranded transcripts (GTF strand == '.') are extracted from the genomic '+' strand
-            # by gffread -w even when transcribed from the '-' strand; translate those in 6 frames!
             unstranded_indices = [
                 idx
                 for idx, raw_entry in enumerate(self.entries)
@@ -129,6 +133,7 @@ class FrameTranslator(object):
                     seqtype=seqtype,
                     entries=sub_entries,
                     chrom_indices=[i + 1 for i in unstranded_indices],
+                    collapse_nested=collapse_nested,
                 )
                 self.__add_orfs(reverse_tx_orfs)
 
@@ -138,6 +143,51 @@ class FrameTranslator(object):
         """Appends all ORFs in a list to the 'orfs' attribute of this class' instance."""
         self.orfs.extend(orf_list)
         return self
+
+    def _select_stop_frame_starts(
+        self,
+        valid_starts: list[int],
+        stop_pos: int,
+        scan_raw: str,
+        stop_tuple: tuple[str, ...],
+        collapse_nested: bool,
+    ) -> list[int]:
+        """Select the maximal ORF start plus only downstream starts creating distinct N-terminal tryptic peptides."""
+        if not valid_starts or not collapse_nested or len(valid_starts) == 1:
+            return valid_starts
+
+        selected = [valid_starts[0]]
+        min_pep_aa = max(6, self.minSize // 3)
+        max_prot = Translator(
+            scan_raw[valid_starts[0] : stop_pos],
+            stops=stop_tuple,
+            genetic_code=self.genetic_code,
+        ).translate()
+        covered_peptides = tryptic_peptides(
+            max_prot,
+            min_len=min_pep_aa,
+            max_missed_cleavages=1,
+            include_met_excision=True,
+        )
+
+        for s_pos in valid_starts[1:]:
+            sub_prot = Translator(
+                scan_raw[s_pos:stop_pos],
+                stops=stop_tuple,
+                genetic_code=self.genetic_code,
+            ).translate()
+            nterm_peps = n_terminal_tryptic_peptides(
+                sub_prot,
+                min_len=min_pep_aa,
+                max_missed_cleavages=0,
+                include_met_excision=True,
+            )
+            novel_nterm = nterm_peps - covered_peptides
+            if novel_nterm:
+                selected.append(s_pos)
+                covered_peptides.update(novel_nterm)
+
+        return selected
 
     def __get_cds(
         self,
@@ -149,8 +199,9 @@ class FrameTranslator(object):
         seqtype,
         entries,
         chrom_indices=None,
+        collapse_nested=True,
     ):
-        """Returns all possible CDS for the three frames of a nucleotide sequence using a deterministic codon walker."""
+        """Returns CDS candidates for the three frames of a nucleotide sequence using a deterministic codon walker."""
         orfs = []
         orf_number = 0
 
@@ -180,10 +231,20 @@ class FrameTranslator(object):
                     codon = scan_seq[pos : pos + 3]
                     if codon in stop_set:
                         if open_starts:
-                            for s_pos in open_starts:
-                                orf_len = pos - s_pos
-                                if self.minSize <= orf_len <= max_orf_nt:
-                                    candidates.append((s_pos, pos))
+                            valid_starts = [
+                                s_pos
+                                for s_pos in open_starts
+                                if self.minSize <= (pos - s_pos) <= max_orf_nt
+                            ]
+                            chosen_starts = self._select_stop_frame_starts(
+                                valid_starts=valid_starts,
+                                stop_pos=pos,
+                                scan_raw=scan_raw,
+                                stop_tuple=stop_tuple,
+                                collapse_nested=collapse_nested,
+                            )
+                            for s_pos in chosen_starts:
+                                candidates.append((s_pos, pos))
                             open_starts = []
                     else:
                         if pos < seq_len and codon in start_set:
@@ -287,6 +348,7 @@ class GenomeTranslator(FrameTranslator):
         maxsize=300,
         circular=True,
         genetic_code=11,
+        collapse_nested_starts=True,
     ):
         """Translate genomic replicons in 6 reading frames."""
         self.frames = 6
@@ -300,6 +362,7 @@ class GenomeTranslator(FrameTranslator):
             maxsize=maxsize,
             circular=circular,
             genetic_code=genetic_code,
+            collapse_nested_starts=collapse_nested_starts,
         )
         self.seqsToTranslate, self.entries = self.read_genome()
 
@@ -315,6 +378,7 @@ class TranscriptomeTranslator(FrameTranslator):
         genetic_code=11,
         gtf_path=None,
         transcript_strands=None,
+        collapse_nested_starts=True,
     ):
         """Translate RNA transcripts in 3 sense frames (or 6 frames for unstranded '.' transcripts)."""
         self.frames = 3
@@ -332,5 +396,6 @@ class TranscriptomeTranslator(FrameTranslator):
             circular=circular,
             genetic_code=genetic_code,
             transcript_strands=resolved_strands,
+            collapse_nested_starts=collapse_nested_starts,
         )
         self.seqsToTranslate, self.entries = self.read_genome()
