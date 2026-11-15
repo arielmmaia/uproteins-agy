@@ -120,6 +120,18 @@ def validate_database(
             f"--stops: '{','.join(shared)}'"
         )
 
+    if getattr(args, "minsize", 18) > getattr(args, "maxsize", 300):
+        parser.error(
+            f"argument --minsize ({args.minsize}) must be <= --maxsize ({args.maxsize})"
+        )
+
+    genetic_code = getattr(args, "genetic_code", 11)
+    from Bio.Data import CodonTable
+    if genetic_code not in CodonTable.unambiguous_dna_by_id:
+        parser.error(
+            f"argument --genetic_code: unknown NCBI genetic code table ID '{genetic_code}'"
+        )
+
 
 def validate_postms(
     args: argparse.Namespace,

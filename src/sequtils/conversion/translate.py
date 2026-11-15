@@ -17,47 +17,71 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-from Bio import SeqIO
+from functools import lru_cache
+import typing as t
+
+from Bio.Data import CodonTable
+
+
+_REASSIGNED_STOP_FALLBACK = {
+    "TGA": "W",  # NCBI Table 4 (Mycoplasma/Spiroplasma/Entomoplasmatales)
+    "TAA": "Q",  # Natural ochre reassignment fallback
+    "TAG": "Q",  # Natural amber reassignment fallback
+}
+
+
+@lru_cache(maxsize=32)
+def build_codon_table(
+    stops: t.Tuple[str, ...] = ("TAA", "TAG", "TGA"),
+    genetic_code: int = 11,
+) -> dict[str, str]:
+    """Build a DNA codon -> amino acid lookup honoring custom stops & NCBI code."""
+    ncbi_table = CodonTable.unambiguous_dna_by_id[genetic_code]
+    table: dict[str, str] = dict(ncbi_table.forward_table)
+
+    stop_set = {c.upper() for c in stops}
+    for codon in ("TAA", "TAG", "TGA"):
+        if codon not in table and codon not in stop_set:
+            table[codon] = _REASSIGNED_STOP_FALLBACK[codon]
+
+    for stop_codon in stop_set:
+        table[stop_codon] = "*"
+
+    return table
 
 
 class Translator(object):
-    def __init__(self, genome):
-        self.genome = genome
+    def __init__(
+        self,
+        genome: str,
+        stops: t.Optional[t.Iterable[str]] = None,
+        genetic_code: int = 11,
+    ):
+        self.genome = str(genome)
+        if stops is None:
+            ncbi_stops = CodonTable.unambiguous_dna_by_id[genetic_code].stop_codons
+            self.stops = tuple(c.upper() for c in ncbi_stops)
+        else:
+            self.stops = tuple(c.upper() for c in stops)
+        self.genetic_code = int(genetic_code)
 
-    def translate(self):
-        table = {
-            'ATA': 'I', 'ATC': 'I', 'ATT': 'I', 'ATG': 'M',
-            'ACA': 'T', 'ACC': 'T', 'ACG': 'T', 'ACT': 'T',
-            'AAC': 'N', 'AAT': 'N', 'AAA': 'K', 'AAG': 'K',
-            'AGC': 'S', 'AGT': 'S', 'AGA': 'R', 'AGG': 'R',
-            'CTA': 'L', 'CTC': 'L', 'CTG': 'L', 'CTT': 'L',
-            'CCA': 'P', 'CCC': 'P', 'CCG': 'P', 'CCT': 'P',
-            'CAC': 'H', 'CAT': 'H', 'CAA': 'Q', 'CAG': 'Q',
-            'CGA': 'R', 'CGC': 'R', 'CGG': 'R', 'CGT': 'R',
-            'GTA': 'V', 'GTC': 'V', 'GTG': 'V', 'GTT': 'V',
-            'GCA': 'A', 'GCC': 'A', 'GCG': 'A', 'GCT': 'A',
-            'GAC': 'D', 'GAT': 'D', 'GAA': 'E', 'GAG': 'E',
-            'GGA': 'G', 'GGC': 'G', 'GGG': 'G', 'GGT': 'G',
-            'TCA': 'S', 'TCC': 'S', 'TCG': 'S', 'TCT': 'S',
-            'TTC': 'F', 'TTT': 'F', 'TTA': 'L', 'TTG': 'L',
-            'TAC': 'Y', 'TAT': 'Y', 'TAA': '*', 'TAG': '*',
-            'TGC': 'C', 'TGT': 'C', 'TGA': '*', 'TGG': 'W',
-        }
-        protein = ""
-        for i in range(0, len(self.genome), 3):
-            codon = self.genome[i:i + 3]
+    def translate(self, initiator: bool = True) -> str:
+        table = build_codon_table(self.stops, self.genetic_code)
+        stop_set = set(self.stops)
+        seq = self.genome.upper().replace("U", "T")
+        chars: list[str] = []
+        for i in range(0, len(seq), 3):
+            codon = seq[i : i + 3]
             if len(codon) == 3:
-                if i == 0:
-                    protein += "M"
+                if i == 0 and initiator and codon not in stop_set:
+                    chars.append("M")
                 else:
-                    protein += table[codon]
-        return protein
+                    chars.append(table[codon])
+        return "".join(chars)
 
-    def complement(self):
+    def complement(self) -> str:
         nuc_table = {
-            'A': 'T',  'T': 'A', 'G': 'C', 'C': 'G'
+            'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G'
         }
-        nuc_seq = ""
-        for i in self.genome:
-            nuc_seq += nuc_table[i]
-        return nuc_seq
+        return "".join(nuc_table[i] for i in self.genome)
+

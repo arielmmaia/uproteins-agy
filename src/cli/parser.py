@@ -184,15 +184,34 @@ _database_parser.add_argument(
 )
 _database_parser.add_argument(
     "--maxsize",
-    help="Max size for the predicted ORFs (in nucleotides)",
-    default=1_000_000,
-    type=int
+    help="Max size for the predicted ORFs (in nucleotides, excluding stop codon; 300 nt = 100 aa)",
+    default=300,
+    type=_types.PositiveInt
 )
 _database_parser.add_argument(
     "--minsize",
-    help="Min size for the predicted ORFs (in nucleotides)",
-    default=30,
-    type=int
+    help="Min size for the predicted ORFs (in nucleotides, excluding stop codon; 18 nt = 6 aa)",
+    default=18,
+    type=_types.PositiveInt
+)
+_database_parser.add_argument(
+    "--circular",
+    dest="circular",
+    action="store_true",
+    default=True,
+    help="Treat genome replicons as circular so ORFs spanning oriC are translated (default for bacterial genomes)."
+)
+_database_parser.add_argument(
+    "--linear",
+    dest="circular",
+    action="store_false",
+    help="Treat genome replicons as linear (disable circular oriC wrap-around)."
+)
+_database_parser.add_argument(
+    "--genetic_code",
+    type=_types.PositiveInt,
+    default=11,
+    help="NCBI genetic code table ID (default: 11 for bacterial/archaeal; use 4 for Mycoplasma/Spiroplasma)."
 )
 _database_parser.add_argument(
     "--external_transcriptome",
