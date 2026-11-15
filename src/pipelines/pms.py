@@ -153,34 +153,37 @@ class PostMSPipeline(object):
         else:
             raise FiletypeError
         alts_pre_rf.extend_orfs(args=self.args)
+        if self.filetype == "genome":
+            genome_rbs = SDInspection(
+                self.args,
+                filetype="genome",
+                folder="Genome",
+                alternatives=alts_pre_rf.alternatives,
+                testing=self.testing,
+            )
+        elif self.filetype == "transcriptome":
+            genome_rbs = SDInspection(
+                self.args,
+                filetype="transcriptome",
+                folder="Transcriptome",
+                alternatives=alts_pre_rf.alternatives,
+                transcriptome_gff="assembled.gtf",
+                transcripts="HISAT/transcripts.fasta",
+                subset="Transcriptome",
+                testing=self.testing,
+            )
+        else:
+            raise FiletypeError
+        alts_pre_rf.alternatives = genome_rbs.get_free_energy()
         if self.args.rrna is not None:
-            if self.filetype == "genome":
-                genome_rbs = SDInspection(
-                    self.args,
-                    filetype="genome",
-                    folder="Genome",
-                    alternatives=alts_pre_rf.alternatives,
-                    testing=self.testing,
-                )
-            elif self.filetype == "transcriptome":
-                genome_rbs = SDInspection(
-                    self.args,
-                    filetype="transcriptome",
-                    folder="Transcriptome",
-                    alternatives=alts_pre_rf.alternatives,
-                    transcriptome_gff="assembled.gtf",
-                    transcripts="HISAT/transcripts.fasta",
-                    subset="Transcriptome",
-                    testing=self.testing,
-                )
-            else:
-                raise FiletypeError
-            alts = genome_rbs.get_free_energy()
-            alts_pre_rf.alternatives = alts
-        alts_pre_rf.sort_by_coordinates()
-        alts_pre_rf.sort_by_atg()
-        alts_pre_rf.sort_by_shine()
-        alts_pre_rf.sort_by_peptides()
+            alts_pre_rf.sort_by_coordinates()
+            alts_pre_rf.sort_by_atg()
+            alts_pre_rf.sort_by_shine()
+            alts_pre_rf.sort_by_peptides()
+        else:
+            alts_pre_rf.sort_by_coordinates()
+            alts_pre_rf.sort_by_atg()
+            alts_pre_rf.sort_by_peptides()
         priorities = alts_pre_rf.get_priorities()
         ext = ExtendedInformation(
             folder=self.folder,

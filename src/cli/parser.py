@@ -503,6 +503,26 @@ _postms_parser.add_argument(
     type=_types.DirectoryPath,
 )
 _postms_parser.add_argument(
+    "--rbs_backend",
+    choices=("python", "auto", "free2bind"),
+    default="python",
+    help="Thermodynamic RNA-RNA duplex dG_37 backend for Shine-Dalgarno scoring "
+    "(default: pure-Python Xia/Turner 'python'; 'free2bind' uses Perl free_align.pl).",
+)
+_postms_parser.add_argument(
+    "--circular",
+    dest="circular",
+    action="store_true",
+    default=True,
+    help="Treat bacterial chromosomes as circular when extracting upstream RBS sequences near oriC (default).",
+)
+_postms_parser.add_argument(
+    "--linear",
+    dest="circular",
+    action="store_false",
+    help="Disable circular chromosome wrap-around when extracting upstream RBS sequences.",
+)
+_postms_parser.add_argument(
     "--max_paralog_loci",
     help="Maximum number of paralogous genomic loci allowed for a novel smORF peptide (Default: 10).",
     type=int,
