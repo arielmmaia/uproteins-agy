@@ -71,10 +71,17 @@ SPECTRAL_FOREST_V2_FEATURES: list[str] = [
     "sqMeanErrorTop7",
 ]
 
+_PKG_MODEL_DIR: pathlib.Path = pathlib.Path(__file__).resolve().parents[1] / "model"
 DEFAULT_MODEL_PATH: pathlib.Path = (
-    REPO_ROOT / "src" / "model" / "spectral_forest_v1_trees.json"
+    _PKG_MODEL_DIR / "spectral_forest_v1_trees.json"
+    if (_PKG_MODEL_DIR / "spectral_forest_v1_trees.json").is_file()
+    else REPO_ROOT / "src" / "model" / "spectral_forest_v1_trees.json"
 )
-LEGACY_PICKLE_PATH: pathlib.Path = REPO_ROOT / "src" / "model" / "model.pkl"
+LEGACY_PICKLE_PATH: pathlib.Path = (
+    _PKG_MODEL_DIR / "model.pkl"
+    if (_PKG_MODEL_DIR / "model.pkl").is_file()
+    else REPO_ROOT / "src" / "model" / "model.pkl"
+)
 
 _CHARGE_COL_RE = re.compile(r"^Charge\d+$")
 _NON_FEATURE_METADATA_COLS = frozenset(
@@ -205,6 +212,18 @@ def extract_feature_matrix(
         elif feat == "lnSpecEValue" and "SpecEValue" in df.columns:
             spec_eval = pd.to_numeric(df["SpecEValue"], errors="coerce").fillna(1.0)
             arr = -np.log(np.clip(spec_eval.to_numpy(dtype=np.float64), 1e-300, None))
+        elif feat == "lnSpecEValue" and "lnEValue" in df.columns:
+            arr = (
+                pd.to_numeric(df["lnEValue"], errors="coerce")
+                .fillna(0.0)
+                .to_numpy(dtype=np.float64, copy=True)
+            )
+        elif feat == "lnEValue" and "lnSpecEValue" in df.columns:
+            arr = (
+                pd.to_numeric(df["lnSpecEValue"], errors="coerce")
+                .fillna(0.0)
+                .to_numpy(dtype=np.float64, copy=True)
+            )
         else:
             raise KeyError(
                 f"Required Spectrum Forest feature '{feat}' is missing from input columns "
@@ -234,6 +253,8 @@ def compute_reference_scaler_bounds(
         if not path.is_file() or path.stat().st_size == 0:
             continue
         for chunk in pd.read_csv(path, sep="\t", chunksize=chunksize, low_memory=False):
+            if "SpecId" not in chunk.columns:
+                break
             cleaned = clean_pin_candidates(chunk)
             if "Label" in cleaned.columns:
                 labels = pd.to_numeric(cleaned["Label"], errors="coerce")

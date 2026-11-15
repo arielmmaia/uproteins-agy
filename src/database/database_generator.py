@@ -28,7 +28,12 @@ from Bio.SeqRecord import SeqRecord
 from ..utils import REPO_ROOT, concat_files
 
 
-DEFAULT_CONTAMINANTS_PATH = REPO_ROOT / "seqlib" / "contaminants.txt"
+_PKG_CONTAMINANTS = pathlib.Path(__file__).resolve().parents[1] / "seqlib" / "contaminants.txt"
+DEFAULT_CONTAMINANTS_PATH = (
+    _PKG_CONTAMINANTS
+    if _PKG_CONTAMINANTS.is_file()
+    else REPO_ROOT / "seqlib" / "contaminants.txt"
+)
 
 
 def load_forward_contaminants(
