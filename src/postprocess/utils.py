@@ -17,8 +17,9 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-import os
+import pathlib
 
+from .percolator import classify_mzid_file
 from ..utils import REPO_ROOT, build_mzid_to_tsv_cmd, ensure_dir, run_cmd
 
 
@@ -29,17 +30,23 @@ class TSVConverter(object):
         self.args = args
 
     def convert_files(self):
-        tsv_dir = ensure_dir(f'{self.folder}/tsv_msgf')
-        files = sorted(os.listdir(f'{self.folder}'))
-        msgf_jar = getattr(self.args, 'msgf_jar', None)
-        java_mem = getattr(self.args, 'java_mem', None) or "8G"
-        for file in files:
-            if file.lower().endswith('.mzid'):
-                cmd = build_mzid_to_tsv_cmd(
-                    f'{self.folder}/{file}',
-                    tsv_dir / f'{file}.tsv',
-                    msgf_jar=msgf_jar,
-                    java_mem=java_mem,
-                )
-                run_cmd(cmd)
+        folder_path = pathlib.Path(self.folder)
+        tsv_dir = ensure_dir(folder_path / "tsv_msgf")
+        msgf_jar = getattr(self.args, "msgf_jar", None)
+        java_mem = getattr(self.args, "java_mem", None) or "8G"
+
+        for entry in sorted(folder_path.iterdir(), key=lambda p: p.name):
+            if not entry.is_file() or not entry.name.lower().endswith(".mzid"):
+                continue
+            # Only convert target/concatenated .mzid files to TSV; decoy-only .mzid
+            # files contain zero target proteins and double Java conversion cost.
+            if classify_mzid_file(entry) == "decoy":
+                continue
+            cmd = build_mzid_to_tsv_cmd(
+                entry,
+                tsv_dir / f"{entry.name}.tsv",
+                msgf_jar=msgf_jar,
+                java_mem=java_mem,
+            )
+            run_cmd(cmd)
         return self
