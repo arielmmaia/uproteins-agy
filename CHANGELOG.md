@@ -1,12 +1,14 @@
-# Changelog
+# Changelog *(Unofficial Experimental Remediation Fork)*
 
-All notable scientific, statistical, and software engineering changes in this fork (`arielmmaia/uproteins-agy`) are documented in this file. Each work unit in `v2.0.0` is backed by a dedicated GitHub Issue (documenting the root cause and proteogenomic impact) and an atomic Pull Request on [`arielmmaia/uproteins-agy`](https://github.com/arielmmaia/uproteins-agy).
+> **Transparency Notice:** This repository ([`arielmmaia/uproteins-agy`](https://github.com/arielmmaia/uproteins-agy)) is a **non-official, autonomously fixed, and non-reviewed** experimental fork of upstream [`CPBMF-Lab/uproteins`](https://github.com/CPBMF-Lab/uproteins) (`v1.4.2`, commit `762beb0`). It is not an official µProteInS release. It was generated as an experimentation of the capabilities of **Gemini 4 Carbon** on high effort running on **Antigravity v2.31.0**, supported by complimentary access to **Google Antigravity** and **Gemini 4 Carbon** to accelerate scientific workflows.
+
+Each work unit applied on top of upstream `v1.4.2` is backed by a dedicated GitHub Issue (documenting the root cause and proteogenomic impact) and an atomic Pull Request on [`arielmmaia/uproteins-agy`](https://github.com/arielmmaia/uproteins-agy).
 
 ---
 
-## [2.0.0] — Complete Proteogenomic, Statistical & Software Remediation
+## [Unreleased — Unofficial Experimental Fork on Base `1.4.2`]
 
-### Complete 22-Unit Issue & Pull Request Index
+### Complete Issue & Pull Request Index
 
 | Unit | Layer | Issue | Pull Request | Summary of Root Cause & Fix |
 | :---: | :--- | :---: | :---: | :--- |
@@ -31,4 +33,5 @@ All notable scientific, statistical, and software engineering changes in this fo
 | **19** | Stage 5 (`validate` ML) | [#37](https://github.com/arielmmaia/uproteins-agy/issues/37) | [#38](https://github.com/arielmmaia/uproteins-agy/pull/38) | Exported all 200 trees (`45,032` nodes, 17 features) + *M. tuberculosis* H37Rv target PIN reference bounds (`N=56,666`) into `src/model/spectral_forest_v1_trees.json`, built pure-NumPy `SpectralForestEngine` (`0.0` max abs diff vs `model.pkl`), eliminated test-time per-batch `MinMaxScaler` distortion and `--inst 0` crashes, and added `uProteInS train-validator` (`lnSpecEValue` + `StratifiedGroupKFold` CV). |
 | **20** | Stage 5 (`validate` Flow) | [#39](https://github.com/arielmmaia/uproteins-agy/issues/39) | [#40](https://github.com/arielmmaia/uproteins-agy/pull/40) | Connected `ProteinFixer -> PreFiltering -> FeatureFishing` directory flow in `ValidatePipeline`, fixed `sample_1` vs `sample_10` substring collisions and modern 3-suffix `msgf2pin` `SpecId` parsing in `SpectrumMiner`, wired rescued sibling LC scans (`"Rescued_LC"`) into `ResultsWrapper`, and fixed `ResultsSummarizer` boolean `transcriptome` handling. |
 | **21** | Stage 6 (`metrics`) | [#41](https://github.com/arielmmaia/uproteins-agy/issues/41) | [#42](https://github.com/arielmmaia/uproteins-agy/pull/42) | Fixed genome-only (`-T NO`) `FileNotFoundError`, normalized `aa_distribution.tsv` to `100.0%` per `(Database, Subset)`, eliminated RBS barplot double-counting while preserving `"Leaderless"`, wired `--non-redundant`, emitted unique `>{ORF_name}|{Genome_Coordinates}` FASTA headers, implemented `ResultsComparison.plot_venn()`, and restored caller CWD in `run_workflow()`. |
-| **22** | E2E Verification & Docs | [#43](https://github.com/arielmmaia/uproteins-agy/issues/43) | [#44](https://github.com/arielmmaia/uproteins-agy/pull/44) | Added full 6-stage + `train-validator` end-to-end integration test suite (`tests/test_e2e_pipeline.py`), hardened `ProteinFixer`/`PreFiltering`/`FeatureFishing` against non-PIN files in `{folder}/Percolator/` and added `lnSpecEValue`/`lnEValue` cross-version fallback, bumped version to `2.0.0`, and wrote `README.md` and `CHANGELOG.md`. |
+| **22** | E2E Verification & Docs | [#43](https://github.com/arielmmaia/uproteins-agy/issues/43) | [#44](https://github.com/arielmmaia/uproteins-agy/pull/44) | Added full 6-stage + `train-validator` end-to-end integration test suite (`tests/test_e2e_pipeline.py`), hardened `ProteinFixer`/`PreFiltering`/`FeatureFishing` against non-PIN files in `{folder}/Percolator/`, added `lnSpecEValue`/`lnEValue` cross-version fallback, and documented the remediated workflow. |
+| **23** | Unofficial Metadata & AI Disclosure | [#45](https://github.com/arielmmaia/uproteins-agy/issues/45) | [#46](https://github.com/arielmmaia/uproteins-agy/pull/46) | Removed unofficial `2.0.0` version numbers/badges (restoring base `1.4.2` in `pyproject.toml` and marking CLI `--version` as `1.4.2 (unofficial experimental fork)`) and added prominent transparency & support disclosures for the autonomous Gemini 4 Carbon / Antigravity v2.31.0 experimentation. |

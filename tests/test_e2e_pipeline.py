@@ -665,16 +665,19 @@ def _install_mock_bio_tools(
 
 
 @pytest.mark.fullrun
-def test_cli_version_reports_2_0_0(capsys):
-    """Verify both pyproject.toml and `uProteInS --version` report 2.0.0."""
+def test_cli_version_is_unofficial_and_not_2_0_0(capsys):
+    """Verify unofficial fork does not claim an official 2.0.0 release version."""
     pyproject_txt = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "2.0.0"' in pyproject_txt
+    assert 'version = "1.4.2"' in pyproject_txt
+    assert 'version = "2.0.0"' not in pyproject_txt
 
     with pytest.raises(SystemExit) as exc_info:
         uproteins(["--version"])
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "uProteInS 2.0.0" in captured.out
+    assert "2.0.0" not in captured.out
+    assert "1.4.2" in captured.out
+    assert "unofficial" in captured.out.lower()
 
 
 @pytest.mark.fullrun
