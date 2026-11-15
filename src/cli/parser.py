@@ -486,9 +486,16 @@ _postms_parser.add_argument(
     type=_types.Executable('percolator'),
 )
 _postms_parser.add_argument(
+    "--e",
+    help="MS-GF+ digestion enzyme code (0: unspecific, 1: Trypsin, 2: Chymotrypsin, "
+    "3: Lys-C, 4: Lys-N, 5: Glu-C, 6: Arg-C, 7: Asp-N, 8: alphaLP, 9: no cleavage). "
+    "Auto-detected from .mzid metadata when omitted.",
+    default=None,
+)
+_postms_parser.add_argument(
     "--enzyme",
-    help="Enzyme name passed to percolator --protein-enzyme.",
-    default='trypsinp',
+    help="Optional explicit enzyme override passed to percolator --protein-enzyme.",
+    default=None,
 )
 _postms_parser.add_argument(
     "--free2bind_dir",
