@@ -69,7 +69,12 @@ class CanonicalPeptideExclusionIndex(object):
                         chunks.append(seq[1:])
 
         if include_contaminants:
-            contam_path = REPO_ROOT / "src" / "seqlib" / "contaminants.txt"
+            pkg_contam = pathlib.Path(__file__).resolve().parents[1] / "seqlib" / "contaminants.txt"
+            contam_path = (
+                pkg_contam
+                if pkg_contam.is_file()
+                else REPO_ROOT / "src" / "seqlib" / "contaminants.txt"
+            )
             if contam_path.is_file():
                 for rec in SeqIO.parse(str(contam_path), "fasta"):
                     if rec.id.lower().startswith(("reverse_", "decoy_")):

@@ -43,7 +43,16 @@ class ProteinFixer(object):
             lower_name = basename.lower()
             if lower_name.startswith(("fixed_", "filtered_")):
                 continue
-            if "pin" not in lower_name and "pep_results" not in lower_name:
+            if (
+                "pin" not in lower_name
+                or "uncompeted" in lower_name
+                or "pep_results" in lower_name
+            ):
+                continue
+
+            with open(file, "r", encoding="utf-8") as probe:
+                first_line = probe.readline().rstrip("\r\n")
+            if not first_line or first_line.split("\t")[0] != "SpecId":
                 continue
 
             out_path = target_dir / f"fixed_{basename}"

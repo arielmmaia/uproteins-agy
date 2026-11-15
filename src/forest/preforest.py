@@ -93,13 +93,19 @@ class PreFiltering(object):
 
         for file in self.pinFiles:
             lower_file = file.lower()
-            if "pin" not in lower_file and "pep_results" not in lower_file:
+            if (
+                "pin" not in lower_file
+                or "uncompeted" in lower_file
+                or "pep_results" in lower_file
+            ):
                 continue
             src_file = pathlib.Path(self.pinFolder) / file
             if not src_file.is_file():
                 continue
 
             df = pd.read_csv(src_file, sep="\t", low_memory=False)
+            if "SpecId" not in df.columns:
+                continue
             df = clean_pin_candidates(df)
             if "Label" in df.columns:
                 df = df[pd.to_numeric(df["Label"], errors="coerce") == 1]
@@ -167,13 +173,19 @@ class FeatureFishing(object):
 
         for file in self.pinFiles:
             lower_file = file.lower()
-            if "pin" not in lower_file and "pep_results" not in lower_file:
+            if (
+                "pin" not in lower_file
+                or "uncompeted" in lower_file
+                or "pep_results" in lower_file
+            ):
                 continue
             pin_path = pathlib.Path(self.pinFolder) / file
             if not pin_path.is_file():
                 continue
 
             chunk = pd.read_csv(pin_path, sep="\t", low_memory=False)
+            if "SpecId" not in chunk.columns:
+                continue
             if cols is None:
                 cols = chunk.columns
             chunk = clean_pin_candidates(chunk)
