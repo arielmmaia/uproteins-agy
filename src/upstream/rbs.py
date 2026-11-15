@@ -18,210 +18,206 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-import os
-
-from Bio import SeqIO
-import pandas as pd
-
-from ..sequtils.orflib import ORF, ORFCollection
-from ..sequtils.locus import StringTieGFF
+from ..sequtils.conversion import complement_dna
+from ..sequtils.locus import (
+    StringTieGFF,
+    load_genome_contigs,
+    resolve_contig_sequence,
+)
+from ..sequtils.orflib import ORFCollection
 from ..sequtils.transcriptomics import TranscriptExtractor
 from ..utils import REPO_ROOT, resolve_executable, resolve_free2bind_script, run_cmd
+from .duplex_dg import (
+    MIN_LEADER_UTR_NT,
+    classify_rbs_category,
+    compute_rbs_free_energy,
+    extract_16s_anti_sd_tail,
+    extract_genomic_upstream_21nt,
+    extract_transcript_upstream,
+)
 
 
 class SDInspection(object):
-    def __init__(self, args, filetype, folder, alternatives, subset="Genome", transcriptome_gff=None, transcripts=None,
-                 testing=False):
-        """
-        Looks for a Shine-Dalgarno sequence using the script free_align.pl from free2bind package.
-        :param args: uProteInS arguments
-        :param filetype: either genome or transcriptome. Lowercase.
-        :param alternatives: the dictionary containing alternative START codons for a given STOP codon, after extending
-        it with AltORF method extend_orfs(), preferably.
-        """
+    def __init__(
+        self,
+        args,
+        filetype,
+        folder,
+        alternatives,
+        subset="Genome",
+        transcriptome_gff=None,
+        transcripts=None,
+        testing=False,
+    ):
+        """Inspect 21-nt upstream regions for Shine-Dalgarno 16S rRNA hybridization
+        free energy (dG_37, kcal/mol)."""
         self.args = args
         self.subset = subset
-        self.tORFs = {}
-        self.testing = testing
-        self.__get_transcripts(transcriptome_gff, assembly=transcripts)
-        self.rRNA = self.__get_sequences(args.rrna)[::-1][:13]  # one of the RNA strings must be 3'-5'.
         self.filetype = filetype
         self.folder = folder
-        self.genome = self.__get_sequences(args.genome)
+        self.testing = testing
         self.pyPath = str(REPO_ROOT)
         self.freeAlignPath = None
+        self.backend = str(getattr(args, "rbs_backend", "python") or "python").lower()
+        self.circular = bool(getattr(args, "circular", True))
+
+        self.tORFs = {}
+        self.__get_transcripts(transcriptome_gff, assembly=transcripts)
+
+        rrna_path = getattr(args, "rrna", None)
+        self.rRNA = (
+            extract_16s_anti_sd_tail(rrna_path, tail_length=13)
+            if rrna_path is not None
+            else ""
+        )
+        self.genome_seqs, self.default_contig = load_genome_contigs(args.genome)
+        self.genome = (
+            self.genome_seqs.get(self.default_contig, "")
+            if self.default_contig
+            else ""
+        )
 
         self.alternatives = alternatives
         self.alternatives = self.__extract_upstream()
 
+    def _score_upstream(self, upstream_seq: str) -> float:
+        if not upstream_seq or not self.rRNA:
+            return 0.0
+        if self.backend == "free2bind":
+            return float(self._run_free_align(upstream_seq))
+        if self.backend == "auto":
+            try:
+                return float(self._run_free_align(upstream_seq))
+            except Exception:
+                return compute_rbs_free_energy(upstream_seq, self.rRNA)
+        return compute_rbs_free_energy(upstream_seq, self.rRNA)
+
     def _run_free_align(self, upstream_seq: str) -> str:
         if self.freeAlignPath is None:
             self.freeAlignPath = resolve_free2bind_script(
-                getattr(self.args, 'free2bind_dir', None)
+                getattr(self.args, "free2bind_dir", None)
             )
-        perl_bin = resolve_executable(None, 'perl', env_var='UPROTEINS_PERL')
+        perl_bin = resolve_executable(None, "perl", env_var="UPROTEINS_PERL")
         res = run_cmd(
-            [str(perl_bin), str(self.freeAlignPath), '-e', str(upstream_seq), str(self.rRNA)],
+            [
+                str(perl_bin),
+                str(self.freeAlignPath),
+                "-e",
+                str(upstream_seq),
+                str(self.rRNA),
+            ],
             capture_output=True,
             text=True,
         )
         return res.stdout.strip()
 
     def __get_transcripts(self, transcriptome_gff, assembly):
-        """
-
-        :param transcriptome_gff: GFF containing the StringTie assembly
-        :param transcripts: fasta file containing the transcripts
-        :return:
-        """
         if transcriptome_gff is not None and assembly is not None:
             self.subset = "Transcriptome"
             gff = StringTieGFF(gff=transcriptome_gff)
             torfs = gff.get_dict()
             sequences = TranscriptExtractor(assembly=assembly)
             transcripts = sequences.get_transcripts()
-            for i in torfs:
-                orf = torfs[i]
-                if 'gene' in orf.name:
-                    name = orf.name[5:]
-                elif 'rna' in orf.name:
-                    name = orf.name[4:]
+            for key, orf in torfs.items():
+                if orf.name in transcripts:
+                    rna_seq = transcripts[orf.name]
+                elif orf.name.startswith("gene-"):
+                    rna_seq = transcripts.get(orf.name[5:], "")
+                elif orf.name.startswith("rna-"):
+                    rna_seq = transcripts.get(orf.name[4:], "")
+                elif "uproteins." in orf.name:
+                    short_name = ".".join(orf.name.split(".")[:2])
+                    rna_seq = transcripts.get(short_name, "")
                 else:
-                    splat = orf.name.split(".")
-                    name = '.'.join(splat[:2])
-                orf.transcript = transcripts[name]
+                    rna_seq = transcripts.get(key, "")
+                orf.transcript = rna_seq
                 self.tORFs[orf.name] = orf
         return self
 
-    @staticmethod
-    def __get_sequences(fasta):
-        records = SeqIO.parse(fasta, 'fasta')
-        seqs = [str(record.seq) for record in records][0]
-        return seqs
-
-    def __extract_upstream_old(self):
-        """
-        Extracts the 21 nucleotides upstream from the START codon of each ORF present in self.results.
-        :return:
-        """
-        upstream_seqs = []
-        for coords, entry in zip(self.coordinates, self.entries):
-            splat_coords = coords.split("-")
-            if 'forward' in entry:
-                start = int(splat_coords[0])
-                upstream = self.genome[start-22: start]  # index starts at 0. Need the 21 nucleotides upstream
-                upstream_seqs.append(upstream)
-            elif 'reverse' in entry:
-                start = int(splat_coords[1])
-                upstream = self.__complement(self.genome[start: start+22][::-1])
-                upstream_seqs.append(upstream)
-        return upstream_seqs
-
     def __extract_upstream(self):
-        """
-        Extracts the 21 nucleotides upstream from the START codon of each ORF present in a ORFCollection().
-        :return: Dictionary with ORFCollections containing the alternative START codons for a given STOP.
-        """
+        """Populate `alt.upstream` (exact <=21 nt strictly upstream of the start codon)
+        and `alt.utr_length` while preserving stop-keyed `ORFCollection` groupings."""
         upstream_seqs = {}
-        for stop in self.alternatives:
-            for alt in self.alternatives[stop]:
-                if alt.strand == 'forward':
-                    if self.subset == "Genome":
-                        upstream = self.genome[alt.start-22: alt.start]
-                    else:
-                        if alt.start-22 > 0:
-                            upstream = alt.transcript[alt.start-22: alt.start]
-                        else:
-                            upstream = ''
-                    alt.upstream = upstream
-                elif alt.strand == 'reverse':
-                    upstream = self.__complement(self.genome[alt.start: alt.start+22][::-1])
-                    alt.upstream = upstream
-                if self.subset == 'Genome':
-                    if str(alt.end) not in upstream_seqs:
-                        upstream_seqs[str(alt.end)] = ORFCollection()
-                        upstream_seqs[str(alt.end)].add_orf(alt)
-                    elif str(alt.end) in upstream_seqs:
-                        upstream_seqs[str(alt.end)].add_orf(alt)
-                elif self.subset == "Transcriptome":
-                    identifier = f'{alt.transcriptName}_{alt.end}'
-                    if identifier not in upstream_seqs:
-                        upstream_seqs[identifier] = ORFCollection()
-                        upstream_seqs[identifier].add_orf(alt)
-                    elif identifier in upstream_seqs:
-                        upstream_seqs[identifier].add_orf(alt)
-
+        for stop_key, collection in self.alternatives.items():
+            out_col = ORFCollection()
+            for alt in collection:
+                if self.subset == "Transcriptome":
+                    tx_seq = getattr(alt, "transcript", None) or ""
+                    if not tx_seq and getattr(alt, "transcriptName", None) in self.tORFs:
+                        tx_seq = self.tORFs[alt.transcriptName].transcript or ""
+                    up_seq, utr_len = extract_transcript_upstream(
+                        tx_seq,
+                        alt.start,
+                        alt.end,
+                        alt.strand or "forward",
+                        window=21,
+                    )
+                    alt.upstream = up_seq
+                    alt.utr_length = utr_len
+                else:
+                    contig_seq = resolve_contig_sequence(
+                        self.genome_seqs,
+                        getattr(alt, "chromosome", None),
+                        self.default_contig,
+                    )
+                    alt.upstream = extract_genomic_upstream_21nt(
+                        contig_seq,
+                        alt.start,
+                        alt.end,
+                        alt.strand or "forward",
+                        circular=self.circular,
+                        window=21,
+                    )
+                    alt.utr_length = None
+                out_col.add_orf(alt)
+            upstream_seqs[stop_key] = out_col
         return upstream_seqs
-
-    def __define_identifier(self, orf_end, transcript_name=None):
-        if self.subset == "Genome":
-            identifier = orf_end
-        else:
-            identifier = f'{transcript_name}_{orf_end}'
-        return identifier
 
     @staticmethod
     def __complement(seq):
-        """
-        :param seq: sequence to generate the reverse complement for
-        :return: complementary sequence
-        """
-        nucs = {"A": "T", "T": "A", "G": "C", "C": "G"}
-        compl = ""
-        for nuc in seq:
-            compl += nucs[nuc]
-        return compl
+        return complement_dna(seq)
 
     def get_free_energy(self):
+        is_tx = self.subset == "Transcriptome"
+        if not self.rRNA:
+            for stop_key in self.alternatives:
+                for alt in self.alternatives[stop_key]:
+                    utr_len = getattr(alt, "utr_length", None)
+                    alt.freeEnergy = 0.0
+                    if is_tx and utr_len is not None and utr_len < MIN_LEADER_UTR_NT:
+                        alt.shineDalgarno = "Leaderless"
+                    else:
+                        alt.shineDalgarno = "Not inspected (--rrna omitted)"
+            return self.alternatives
+
         alts = {}
-        for stop in self.alternatives:
-            for alt in self.alternatives[stop]:
-                if alt.upstream != '':
-                    energy = self._run_free_align(alt.upstream)
+        for stop_key, collection in self.alternatives.items():
+            out_col = ORFCollection()
+            for alt in collection:
+                utr_len = getattr(alt, "utr_length", None)
+                if is_tx and utr_len is not None and utr_len < MIN_LEADER_UTR_NT:
+                    alt.freeEnergy = 0.0
+                    alt.shineDalgarno = "Leaderless"
+                elif getattr(alt, "upstream", ""):
+                    energy = self._score_upstream(alt.upstream)
                     alt.freeEnergy = float(energy)
-                    sd_seq = self.__check_rbs(energy)
-                    alt.shineDalgarno = sd_seq
+                    alt.shineDalgarno = classify_rbs_category(
+                        alt.freeEnergy,
+                        is_transcriptome=is_tx,
+                        utr_length=utr_len,
+                    )
                 else:
-                    alt.freeEnergy = 0
-                    alt.shineDalgarno = self.__check_rbs(0)
-                identifier = self.__define_identifier(alt.end, transcript_name=alt.transcriptName)
-                if identifier not in alts:
-                    alts[identifier] = ORFCollection()
-                    alts[identifier].add_orf(alt)
-                else:
-                    alts[identifier].add_orf(alt)
+                    alt.freeEnergy = 0.0
+                    alt.shineDalgarno = classify_rbs_category(
+                        0.0,
+                        is_transcriptome=is_tx,
+                        utr_length=utr_len,
+                    )
+                out_col.add_orf(alt)
+            alts[stop_key] = out_col
         return alts
 
-    def get_free_energy_old(self):
-        """
-        Runs free_align.pl to check which part of the sequence has the minimum free energy when binding to the rRNA,
-        i.e, has the most stable binding. """
-        energies = []
-        sd = []
-        for upstream_seq in self.upstreamSequences:
-            energy = self._run_free_align(upstream_seq)
-            energies.append(f'{energy}')
-            sd_seq = self.__check_rbs(energy)
-            sd.append(sd_seq)
-        self.results.insert(5, "Free Energy", energies)
-        self.results.insert(6, "Shine-Dalgarno", sd)
-        return self
-
-    @staticmethod
-    def __check_rbs(rbs):
-        if float(rbs) >= -3.4535:
-            sd_seq = "Leaderless"
-        elif -8.4 < float(rbs) < -3.4535:
-            sd_seq = "Present. Low to moderate binding."
-        elif float(rbs) <= -8.4:
-            sd_seq = "Present. Strong binding."
-        else:
-            sd_seq = "SD absent"
-        return sd_seq
-
     def save_data(self):
-        out = f'{self.folder}/post_perc/{self.filetype}_results_03.txt'
-        self.results.to_csv(out, sep='\t', index=False)
+        out = f"{self.folder}/post_perc/{self.filetype}_results_03.txt"
+        self.results.to_csv(out, sep="\t", index=False)
         return self
-
-
