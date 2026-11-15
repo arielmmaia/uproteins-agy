@@ -88,10 +88,15 @@ class ExtendedInformation(object):
                 continue
 
             frames.append(ndf)
+            lo_c, hi_c = (
+                (int(priority.start), int(priority.end))
+                if int(priority.start) <= int(priority.end)
+                else (int(priority.end), int(priority.start))
+            )
             priority_coords = (
-                f"{priority.contig}:{priority.start}-{priority.end}({priority.strand_sign})"
+                f"{priority.contig}:{lo_c}-{hi_c}({priority.strand_sign})"
                 if getattr(priority, "contig_formatted", False)
-                else f"{priority.start}-{priority.end}"
+                else f"{lo_c}-{hi_c}"
             )
             for _ in range(len(ndf)):
                 extended.append(priority.name)

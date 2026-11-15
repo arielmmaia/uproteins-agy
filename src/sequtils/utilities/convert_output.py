@@ -17,8 +17,35 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-import pandas as pd
 from Bio import SeqIO
+import pandas as pd
+
+
+def _load_optional_gff(gff_path) -> pd.DataFrame:
+    from ..locus import _IGNORED_GFF_FEATURES, read_gff_dataframe
+
+    df = read_gff_dataframe(gff_path)
+    if df.empty:
+        return df
+    feat_lower = df["feature"].astype(str).str.lower()
+    return df[~feat_lower.isin(_IGNORED_GFF_FEATURES)].copy()
+
+
+def _extract_gene_label(raw_attrs: str) -> str | None:
+    from ..locus import parse_gff_attributes
+
+    attrs = parse_gff_attributes(raw_attrs)
+    for key in ("locus_tag", "Name", "gene", "Parent", "ID", "gene_id"):
+        val = attrs.get(key)
+        if val:
+            for prefix in ("gene-", "cds-", "rna-"):
+                if val.startswith(prefix):
+                    return val[len(prefix) :]
+            return val
+    parts = [p.strip() for p in str(raw_attrs).split(";") if p.strip()]
+    if len(parts) > 1 and len(parts[1]) > 12:
+        return parts[1][12:]
+    return None
 
 
 class FastaConverter(object):
@@ -28,54 +55,48 @@ class FastaConverter(object):
         self.refSeq = gff
         self.gff = self.__gff_info()
 
-    def __gff_info(self):
-        """ Must specify a gff file. """
-        df = pd.read_csv(self.refSeq, sep='\t', header=2)
-        df.columns = ['seqname', 'source', 'feature', 'start', 'end', 'score', 'strand', 'frame', 'attributes']
-        df = df[df["source"] == 'Protein Homology']
-        return df
+    def __gff_info(self) -> pd.DataFrame:
+        return _load_optional_gff(self.refSeq)
 
-    def convert_entries(self, sep='\t', **kwargs):
-        """ Convert all protein entries in the percolator output to the Uniprot. If 'pattern' is specified as an
-        :argument, this will check only for target IDs with this pattern during the conversion. This is useful when
-        the uniprot conversor returns more than a single target for a ID. """
-        if kwargs.get("pattern"):
-            pattern = kwargs.get("pattern")
-        else:
-            pattern = ""
-        id_dict = {}
-        df = pd.read_csv(self.cFile, sep=sep)
-        df = df[df["To"].str.contains(pattern, regex=False, na=False)]
-        ids = df["From"].tolist()
-        target = df["To"].tolist()
-        for i in range(len(ids)):
-            gff = self.gff[self.gff["attributes"].str.contains(target[i], regex=False, na=False)]
-            if len(gff["attributes"].tolist()) > 0:
-                attrs = gff["attributes"].tolist()[0]
-                gene_name = attrs.split(";")
-                gene = gene_name[1][12:]
-                id_dict[ids[i]] = gene
-        fasta_file = []
-        records = SeqIO.parse(self.fasta, 'fasta')
+    def convert_entries(self, sep="\t", **kwargs):
+        """Convert protein entries in a FASTA file using an optional ID mapping table
+        and reference GFF3/GTF annotation."""
+        pattern = kwargs.get("pattern") or ""
+        id_dict: dict[str, str] = {}
+        if self.cFile is not None and not self.gff.empty:
+            df = pd.read_csv(self.cFile, sep=sep)
+            df = df[df["To"].astype(str).str.contains(pattern, regex=False, na=False)]
+            ids = df["From"].tolist()
+            target = df["To"].tolist()
+            for src_id, tgt_id in zip(ids, target):
+                gff_hits = self.gff[
+                    self.gff["attributes"].astype(str).str.contains(
+                        str(tgt_id), regex=False, na=False
+                    )
+                ]
+                if not gff_hits.empty:
+                    gene = _extract_gene_label(gff_hits["attributes"].iloc[0])
+                    if gene:
+                        id_dict[str(src_id)] = gene
+
+        fasta_file: list[str] = []
+        records = SeqIO.parse(self.fasta, "fasta")
         for record in records:
             if "|" in record.id:
-                name = record.id.split("|")[2]
-                if name in id_dict:
-                    converted = id_dict[name]
-                else:
-                    converted = name
+                parts = record.id.split("|")
+                name = parts[2] if len(parts) > 2 else parts[-1]
+                converted = id_dict.get(name, name)
             else:
-                converted = record.id
-            fasta_file.append(f'>{converted}\n{record.seq}\n')
-        with open('converted_genome_database.fasta', 'w') as fa:
+                converted = id_dict.get(record.id, record.id)
+            fasta_file.append(f">{converted}\n{record.seq}\n")
+        with open("converted_genome_database.fasta", "w") as fa:
             fa.writelines(fasta_file)
 
 
-
 class PercolatorConverter(object):
-    def __init__(self, pout=None, handle='psm', conversion_file=None, gff=None):
-        """ 'pout' is a percolator output PSM or Protein table. Handle specifies whether this table is 'psm' or
-        'protein'"""
+    def __init__(self, pout=None, handle="psm", conversion_file=None, gff=None):
+        """Convert a Percolator PSM or Protein table into standard 6-column TSV format.
+        Gracefully accepts `gff=None` when `--gff` is omitted."""
         self.handle = handle
         self.pout = pout
         self.__check_handle()
@@ -84,84 +105,32 @@ class PercolatorConverter(object):
         self.gff = self.__gff_info()
 
     def __check_handle(self):
-        if self.handle == 'psm':
+        if self.handle == "psm":
             self.dataFrame = pd.read_csv(self.pout, sep="\t", usecols=[0, 1, 2, 3, 4, 5])
-            self.dataFrame = self.dataFrame.drop('proteinIds', axis=1)
+            if "proteinIds" in self.dataFrame.columns:
+                self.dataFrame = self.dataFrame.drop("proteinIds", axis=1)
             self.__fix_columns()
-        elif self.handle =='protein':
+        elif self.handle == "protein":
             self.dataFrame = pd.read_csv(self.pout, sep="\t")
 
     def __fix_columns(self):
-        """ Puts all protein Ids of percolator output in a single column. """
-        ids = []
-        with open(self.pout, 'r') as psm:
-            lines = psm.readlines()
-            for i in range(len(lines)):
-                if i > 0:
-                    proteins = lines[i].split("\t")[5:]
-                    sep = ","
-                    proteins = sep.join(proteins)
-                    proteins = proteins.rstrip()
-                    ids.append(proteins)
-        # print(self.dataFrame)
+        """Collapse all trailing tab-separated protein IDs of Percolator PSM output
+        into a single comma-delimited `proteinIds` column."""
+        ids: list[str] = []
+        with open(self.pout, "r", encoding="utf-8", errors="replace") as psm:
+            for idx, line in enumerate(psm):
+                if idx == 0:
+                    continue
+                stripped = line.rstrip("\r\n")
+                if not stripped:
+                    continue
+                proteins = [p.strip() for p in stripped.split("\t")[5:] if p.strip()]
+                ids.append(",".join(proteins))
         self.dataFrame.insert(5, "proteinIds", ids)
 
-    def convert_entries(self, sep='\t', **kwargs):
-        """ Convert all protein entries in the percolator output to the Uniprot. If 'pattern' is specified as an
-        :argument, this will check only for target IDs with this pattern during the conversion. This is useful when
-        the uniprot conversor returns more than a single target for an ID. """
-        # if kwargs.get("pattern"):
-        #     pattern = kwargs.get("pattern")
-        # else:
-        #     pattern = ""
-        # id_dict = {}
-        # df = pd.read_csv(self.cFile, sep=sep)
-        # df = df[df["To"].str.contains(pattern)]
-        # ids = df["From"].tolist()
-        # target = df["To"].tolist()
-        # for i in range(len(ids)):
-        #     gff = self.gff[self.gff["attributes"].str.contains(target[i])]
-        #     if len(gff["attributes"].tolist()) > 0:
-        #         attrs = gff["attributes"].tolist()[0]
-        #         gene_name = attrs.split(";")
-        #         gene = gene_name[1][12:]
-        #         id_dict[ids[i]] = gene
-        # converted = self.__convert_proteins(id_dict)
-        # self.dataFrame = self.dataFrame.drop('proteinIds', axis=1)
-        # self.dataFrame.insert(5, "proteinIds", converted)
+    def convert_entries(self, sep="\t", **kwargs):
+        """Write standardized Percolator PSM/Protein table to `{output}.txt`."""
         self.dataFrame.to_csv(f'{kwargs.get("output")}.txt', sep="\t", index=False)
 
-    def __convert_proteins(self, id_dict):
-        proteins = self.dataFrame["proteinIds"].tolist()
-        converted = []
-        for i in range(len(proteins)):
-            p_set = proteins[i].split(",")
-            c_set = ""
-            for pro in range(len(p_set)):
-                if 'ORF' not in p_set[pro]:
-                    if p_set[pro] != "":
-                        pos = p_set[pro].rfind("|") + 1
-                        name = p_set[pro][pos:]
-                        if name in id_dict:
-                            conv = id_dict[name]
-                        else:
-                            conv = p_set[pro]
-                        if pro > 0:
-                            c_set += f',{conv}'
-                        else:
-                            c_set += f'{conv}'
-                else:
-                    if p_set[pro] != "":
-                        if pro > 0:
-                            c_set += f',{p_set[pro]}'
-                        else:
-                            c_set += f'{p_set[pro]}'
-            converted.append(c_set)
-        return converted
-
-    def __gff_info(self):
-        """ Must specify a gff file. """
-        df = pd.read_csv(self.refSeq, sep='\t', header=2)
-        df.columns = ['seqname', 'source', 'feature', 'start', 'end', 'score', 'strand', 'frame', 'attributes']
-        df = df[df["source"] == 'Protein Homology']
-        return df
+    def __gff_info(self) -> pd.DataFrame:
+        return _load_optional_gff(self.refSeq)
