@@ -1,23 +1,35 @@
-# µProteInS v2.0.0 — Bacterial Proteogenomics Pipeline for smORF Microprotein Discovery
+# µProteInS *(Unofficial Experimental Remediation Fork)*
 
+[![Status: Unofficial Experimental Fork](https://img.shields.io/badge/status-unofficial%20experimental%20fork-orange.svg)](CHANGELOG.md)
 [![License: GPL v3 or later](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Bioinformatics](https://img.shields.io/badge/Bioinformatics-10.1093%2Fbioinformatics%2Fbtac115-brightgreen.svg)](https://doi.org/10.1093/bioinformatics/btac115)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-2.0.0-informational.svg)](CHANGELOG.md)
+
+> [!WARNING]
+> **Unofficial, Autonomously Remediated & Non-Reviewed Experimental Fork — Transparency Notice**
+>
+> - **Not an official release:** This repository (`arielmmaia/uproteins-agy`) is a **non-official, autonomously fixed, and non-reviewed** fork of [`CPBMF-Lab/uproteins`](https://github.com/CPBMF-Lab/uproteins) (upstream `v1.4.2`, commit `762beb0`). It is **not** an official µProteInS version and has **not** been reviewed or endorsed by the original µProteInS authors.
+> - **Experimental AI Engineering Study:** All scientific, statistical, and software audits, issue reports, code remediations, and test suites in this fork were generated autonomously as an experimentation of the capabilities of **Gemini 4 Carbon** (high-effort reasoning) running on **Antigravity v2.31.0**.
+> - **Support Disclosure:** This experimentation was **supported by complimentary access to Google Antigravity and Gemini 4 Carbon to accelerate scientific workflows**.
+> - **Independent Verification Required:** Because the changes in this repository have not undergone human peer review or experimental wet-lab re-validation, researchers must independently audit all code paths, statistical assumptions, and candidate microprotein identifications before using them in scientific publications or downstream biological workflows.
+
+---
+
+## Overview
 
 **µProteInS** is an end-to-end bacterial proteogenomics pipeline for identifying, statistically validating, and characterizing novel microproteins encoded by small open reading frames (**smORFs**, typically $\le 100$ amino acids) from mass spectrometry (LC-MS/MS) and optional RNA-Seq data.
 
-> **What's new in v2.0.0:** This release delivers a comprehensive 22-unit scientific, statistical, and software remediation of µProteInS v1.4.2 (`Issues #1–#43`, `PRs #2–#44` — see [`CHANGELOG.md`](CHANGELOG.md)), restoring compatibility with Python `>=3.10` / `pandas >=2.2` / `scikit-learn >=1.5` and resolving major proteogenomic methodology flaws across bacterial alignment, circular `oriC` translation, target-decoy contaminant design, class-specific subgroup FDR control, `I == L` peptide uniqueness, Shine-Dalgarno $\Delta G^\circ_{37}$ thermodynamics, alternative start-codon selection, and portable Spectrum Forest machine-learning validation.
+In this experimental fork, an autonomous deep-dive audit and 22-unit remediation (`Issues #1–#43`, `PRs #2–#44` — documented one-by-one in [`CHANGELOG.md`](CHANGELOG.md)) was conducted on top of upstream `v1.4.2` to unblock execution on modern Python stacks (`Python >= 3.10`, `pandas >= 2.2`, `scikit-learn >= 1.5`) and address workflow, statistical, thermodynamic, and coordinate bugs identified during the audit.
 
 ![Workflow](images/figure_1_no_layers.png)
 
 ---
 
-## Architecture & Scientific Methodology (v2.0.0)
+## Architecture & Remediated Methodology in This Fork
 
 µProteInS executes six sequential pipeline stages plus an optional classifier retraining command:
 
-| Stage | Subcommand | Purpose & Key v2.0.0 Guarantees |
+| Stage | Subcommand | Purpose & Key Remediations Implemented in This Fork |
 | :--- | :--- | :--- |
 | **1** | `assembly` | **Bacterial RNA-Seq Alignment & Assembly:** Enforces un-spliced alignment (`--no-spliced-alignment`, opt-in `--allow_splicing`), streams HISAT2 SAM directly into `samtools sort` via OS pipes without uncompressed SAM disk/RAM bloat, and maps all library strandedness modes (`RF`, `FR`, `R`, `F`, and unstranded). |
 | **2** | `database` | **Six-/Three-Frame smORF Translation & Proteome Matching:** Restores `--maxsize 300` (`100` aa) and `--minsize 18` (`6` aa) defaults, wraps circular bacterial chromosomes across `oriC` (`--circular` / `--linear`), supports NCBI genetic codes (`--genetic_code 11`, `4` for *Mycoplasma*, etc.) and IUPAC/soft-masked DNA, preserves contig and isoform IDs, excludes nested non-`ATG` canonical sub-ORF explosions and upstream readthroughs across canonical `GTG`/`TTG` starts, and places the 121 forward standard contaminants (`>contaminant_*`) into target FASTAs. |
@@ -158,7 +170,7 @@ uproteins metrics \
 ```bash
 uproteins train-validator \
   --training_pin labeled_psms.pin \
-  --output_model custom_forest_v2.json \
+  --output_model custom_forest.json \
   --label_column label_spectra \
   --n_estimators 200 \
   --cv_folds 5
@@ -168,7 +180,7 @@ uproteins train-validator \
 
 ## Running the Test Suite
 
-The repository includes 236 deterministic unit, statistical, thermodynamic, ML parity, and full 6-stage end-to-end integration tests that run in ~10 seconds without requiring external C/Java bioinformatics binaries:
+The repository includes 236 deterministic unit, statistical, thermodynamic, ML parity, and full 6-stage end-to-end integration tests that run in ~12 seconds without requiring external C/Java bioinformatics binaries:
 
 ```bash
 pytest -v
@@ -176,9 +188,9 @@ pytest -v
 
 ---
 
-## Citations
+## Citations (Original µProteInS Publications)
 
-If you use **µProteInS** in your research, please cite the original publications:
+For the official upstream software and guides, visit [`CPBMF-Lab/uproteins`](https://github.com/CPBMF-Lab/uproteins) and [`Eduardo-vsouza/uproteins`](https://github.com/Eduardo-vsouza/uproteins/wiki). Please cite the original µProteInS publications if this software informs your research:
 
 1. **Core Pipeline (*Bioinformatics*, 2022):**
    de Souza, E. V., Dalberto, P. F., Machado, V. P., Canedo Miranda, A., Saghatelian, A., Machado, P., Basso, L. A., & Bizarro, C. V. (2022). µProteInS — a proteogenomics pipeline for finding novel bacterial microproteins encoded by small ORFs. *Bioinformatics*, 38(9), 2612–2614. https://doi.org/10.1093/bioinformatics/btac115
@@ -189,9 +201,11 @@ If you use **µProteInS** in your research, please cite the original publication
 
 ---
 
-## Changelog & Remediation Audit Trail
+## Experimental Provenance, Acknowledgments & Audit Trail
 
-Every bug fix, statistical improvement, and architectural change between `v1.4.2` and `v2.0.0` is documented issue-by-issue and PR-by-PR in [`CHANGELOG.md`](CHANGELOG.md).
+- **Autonomous Remediation Experiment:** This fork (`arielmmaia/uproteins-agy`) is a non-official, autonomously fixed, and non-reviewed experimental version of µProteInS evaluating the capabilities of **Gemini 4 Carbon** on high effort running on **Antigravity v2.31.0**.
+- **Acknowledgment:** Supported by complimentary access to **Google Antigravity** and **Gemini 4 Carbon** to accelerate scientific workflows.
+- **Complete Issue & PR History:** Every bug report, statistical rationale, and code change applied on top of upstream `v1.4.2` is indexed in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 

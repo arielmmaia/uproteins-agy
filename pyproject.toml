@@ -1,6 +1,6 @@
 [project]
 name = "uproteins"
-version = "2.0.0"
+version = "1.4.2"
 description = "Bacterial proteogenomics pipeline for microprotein (smORF) discovery and validation"
 authors = [
     {name = "Cristiano Valim Bizarro", email = "cristiano.bizarro@pucrs.br"},
