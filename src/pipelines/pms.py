@@ -38,12 +38,12 @@ class PostMSPipeline(object):
         self._reformat_results()
 
     def _run_percolator(self):
-        perc = PercolatorProcessing(folder=self.folder, filetype=self.filetype)
+        perc = PercolatorProcessing(folder=self.folder, filetype=self.filetype, args=self.args)
         perc.create_metafiles().convert_to_pin()
         perc.percolate()
 
     def _process_percolator(self):
-        tsv = TSVConverter(self.folder)
+        tsv = TSVConverter(self.folder, args=self.args)
         tsv.convert_files()
 
         data_filter = PostPercolator(self.args, folder=self.folder, filetype=self.filetype)

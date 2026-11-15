@@ -158,7 +158,7 @@ _database_parser.add_argument(
     "--starts",
     help="The start codons that should be used for the six and three "
     "frame translation. By default, the NCBI bacterial genetic code is "
-    "used. Space separated list.",
+    "used. Comma-separated list.",
     action=_types.CommaListAction,
     type=_types.Codon,
     default='TTG,CTG,ATT,ATC,ATA,ATG,GTG'
@@ -166,7 +166,7 @@ _database_parser.add_argument(
 _database_parser.add_argument(
     "--stops",
     help="The stop codons that should be used for the six and three frame "
-    "translation. Space separated list.",
+    "translation. Comma-separated list.",
     action=_types.CommaListAction,
     type=_types.Codon,
     default='TAA,TAG,TGA'
@@ -207,8 +207,6 @@ _database_parser.add_argument(
 # =======
 # MS MODE
 # =======
-# TODO: I have to check each of these args to add validation
-# The problem is they are from another CLI application
 _ms_parser = _modes.add_parser('ms')
 _ms_parser.add_argument(
     '-o', '--outdir',
@@ -229,6 +227,12 @@ _ms_parser.add_argument(
     help="Inform the directory containing all your .mzML files.",
     required=True,
     type=_types.DirectoryPath
+)
+_ms_parser.add_argument(
+    "--msgf_jar",
+    help="Path to MSGFPlus.jar. Falls back to $UPROTEINS_MSGF_JAR, "
+    "Bioconda msgf_plus, or dependencies/MSGFPlus/MSGFPlus.jar.",
+    type=_types.FilePath,
 )
 _ms_parser.add_argument(
     "--t",
@@ -301,6 +305,7 @@ _ms_parser.add_argument(
 )
 _ms_parser.add_argument(
     "--mod",
+    type=_types.FilePath,
     help="Modification file; Default: standard amino acids with fixed "
     "C+57; only if -mod is not specified)"
 )
@@ -387,31 +392,31 @@ _postms_parser.add_argument(
     help="Path to a GFF file",
     type=_types.FilePath
 )
-# TODO: Check appropiate type
 _postms_parser.add_argument(
     "--pep",
-    help="Posterior Error Probability (PEP) cutoff for percolator output.",
-    default=1
+    help="Posterior Error Probability (PEP) cutoff for percolator output (0, 1].",
+    type=_types.Probability,
+    default=1.0
 )
 _postms_parser.add_argument(
     "--qvalue",
-    help="Q-Value cutoff for percolator output",
-    type=float,
+    help="Q-Value cutoff for percolator output (0, 1].",
+    type=_types.Probability,
     default=0.01
 )
 _postms_parser.add_argument(
     "--starts",
     help="The start codons that should be used for the six and three "
     "frame translation. By default, the NCBI bacterial genetic code is "
-    "used. Space separated list.",
+    "used. Comma-separated list.",
     action=_types.CommaListAction,
     type=_types.Codon,
     default='TTG,CTG,ATT,ATC,ATA,ATG,GTG'
-    )
+)
 _postms_parser.add_argument(
     "--stops",
     help="The stop codons that should be used for the six and three frame "
-    "translation. Space separated list.",
+    "translation. Comma-separated list.",
     action=_types.CommaListAction,
     type=_types.Codon,
     default='TAA,TAG,TGA'
@@ -426,6 +431,33 @@ _postms_parser.add_argument(
     help="Maximum ORF size (in nucleotides)",
     type=int,
     default=300
+)
+_postms_parser.add_argument(
+    "--msgf_jar",
+    help="Path to MSGFPlus.jar for MzIDToTsv conversion.",
+    type=_types.FilePath,
+)
+_postms_parser.add_argument(
+    "--msgf2pin_path",
+    help="Path to msgf2pin executable.",
+    default='msgf2pin',
+    type=_types.Executable('msgf2pin'),
+)
+_postms_parser.add_argument(
+    "--percolator_path",
+    help="Path to percolator executable.",
+    default='percolator',
+    type=_types.Executable('percolator'),
+)
+_postms_parser.add_argument(
+    "--enzyme",
+    help="Enzyme name passed to percolator --protein-enzyme.",
+    default='trypsinp',
+)
+_postms_parser.add_argument(
+    "--free2bind_dir",
+    help="Path to free2bind directory containing free_align.pl.",
+    type=_types.DirectoryPath,
 )
 
 # =============

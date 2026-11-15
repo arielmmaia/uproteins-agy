@@ -1,0 +1,27 @@
+name: uproteins
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python>=3.10,<3.14
+  - pip
+  - openjdk>=11
+  - perl>=5.26
+  - hisat2>=2.2.1
+  - samtools>=1.17
+  - stringtie>=2.2.1
+  - gffcompare>=0.12.6
+  - gffread>=0.12.7
+  - msgf_plus>=2023.01.12
+  - percolator>=3.6
+  - biopython>=1.83
+  - numpy>=1.26
+  - pandas>=2.2
+  - scikit-learn>=1.5
+  - matplotlib>=3.8
+  - seaborn>=0.13
+  - pymzml>=2.5
+  - pytest>=8.0
+  - pip:
+      - -e .

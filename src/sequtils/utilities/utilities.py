@@ -39,5 +39,6 @@ def findnth(string, substring, n):
     return len(string) - len(parts[-1]) - len(substring)
 
 def check_dir(folder):
-    if not os.path.exists(folder):
-        os.system(f'mkdir {folder}')
+    import pathlib
+
+    pathlib.Path(folder).mkdir(parents=True, exist_ok=True)

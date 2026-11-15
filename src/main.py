@@ -20,6 +20,8 @@
 
 import argparse
 import os
+import pathlib
+import shutil
 import sys
 import typing as t
 
@@ -35,9 +37,10 @@ from src.postprocess import ResultsSummarizer
 from src.pipelines import PostMSPipeline, ValidatePipeline
 from src.sequtils.__helpers import ExternalAssemblyError
 from src.metrics import Metrics
+from src.utils import REPO_ROOT, ensure_dir
 
 
-pypath = sys.path[0]
+pypath = str(REPO_ROOT)
 
 
 def uproteins(args: t.Optional[t.Sequence[str]] = None):
@@ -53,22 +56,20 @@ def uproteins(args: t.Optional[t.Sequence[str]] = None):
     run_workflow(args_namespace, subparsers[args_namespace.mode])
 
 
+def _copy_if_distinct(src: pathlib.Path, dst: pathlib.Path) -> None:
+    ensure_dir(dst.parent)
+    if src.resolve() != dst.resolve():
+        shutil.copy2(src, dst)
+
+
 def run_workflow(
     args,
     subparser: argparse.ArgumentParser
 ):
-    # argfix = ArgumentsFixer(parser)
-    # args = argfix.get_abspath()
     mode = args.mode
 
-    if not os.path.exists(args.outdir):
-        cmd_dir = "mkdir %s" % args.outdir
-        os.system(cmd_dir)
-    os.chdir(args.outdir)
-    # if args.smorfs is not None:
-    #     if args.smorfs != "YES" or args.smorfs != "NO":
-    #         print("\nInvalid argument. smorfs argument must be YES or NO.\n")
-    #         return os.EX_USAGE
+    outdir_path = ensure_dir(args.outdir)
+    os.chdir(outdir_path)
 
     if mode == "assembly":
         validators.validate_assembly(args, subparser)
@@ -78,7 +79,6 @@ def run_workflow(
             mapping = ReadMapper(args)
             mapping.create_indexes()
             mapping.align_reads()
-        # mapping.sort_aln(i)
         assembly = TranscriptAssembly(args)
         if args.step <= 2:
             assembly.assemble()
@@ -96,10 +96,11 @@ def run_workflow(
         validators.validate_database(args, subparser)
 
         if args.external_gtf is not None and args.external_transcriptome is not None:
-            os.system(f'cp {args.external_gtf} {args.outdir}/assembled.gtf')
-            if not os.path.exists(f'{args.outdir}/HISAT'):
-                os.system(f'mkdir {args.outdir}/HISAT')
-            os.system(f'cp {args.external_transcriptome} {args.outdir}/HISAT/transcripts.fasta')
+            _copy_if_distinct(pathlib.Path(args.external_gtf), outdir_path / 'assembled.gtf')
+            _copy_if_distinct(
+                pathlib.Path(args.external_transcriptome),
+                outdir_path / 'HISAT' / 'transcripts.fasta',
+            )
         elif args.external_gtf is not None and args.external_transcriptome is None:
             raise ExternalAssemblyError
         elif args.external_transcriptome is not None and args.external_gtf is None:

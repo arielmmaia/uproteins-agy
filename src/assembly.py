@@ -58,7 +58,10 @@ class ReadMapper:
         return False
 
     def create_indexes(self):
-        cmd_index = ['hisat2-build', str(self.genome), 'genome']
+        from src.utils import resolve_executable
+
+        hisat2_build = resolve_executable(None, 'hisat2-build', env_var='UPROTEINS_HISAT2_BUILD')
+        cmd_index = [str(hisat2_build), str(self.genome), 'genome']
         result = subprocess.run(cmd_index)
         if (code := result.returncode) != 0:
             err = f'hisat2-build finished with non-zero return value: {code}'
@@ -66,6 +69,9 @@ class ReadMapper:
         return self
 
     def align_reads(self):
+        from src.utils import resolve_executable
+
+        hisat2_bin = resolve_executable(None, 'hisat2', env_var='UPROTEINS_HISAT2')
         pathlib.Path('HISAT/sam').mkdir(exist_ok=True, parents=True)
 
         reads = self.args.single
@@ -77,7 +83,7 @@ class ReadMapper:
             read_name = f'aligned_{i}'
 
             cmd_hisat = [
-                'hisat2',
+                str(hisat2_bin),
                 '-x', 'genome',
                 '--dta',
                 '-S', f'HISAT/sam/{read_name}.sam'
@@ -103,11 +109,14 @@ class ReadMapper:
 
     def _sort_alignment(self, read_name: str):
         """Use samtools to sort the alignments in the SAM file."""
+        from src.utils import resolve_executable
+
+        samtools_bin = resolve_executable(None, 'samtools', env_var='UPROTEINS_SAMTOOLS')
         pathlib.Path("HISAT/bam").mkdir(exist_ok=True, parents=True)
 
         # run samtools view and pipe it to samtools sort
         cmd_view = [
-            'samtools',
+            str(samtools_bin),
             'view',
             '-Su',
             f'HISAT/sam/{read_name}.sam'
@@ -121,7 +130,7 @@ class ReadMapper:
             cli.exit(3, err)
 
         cmd_sort = [
-            'samtools',
+            str(samtools_bin),
             'sort',
             '-o',
             f'HISAT/bam/{read_name}.bam'
@@ -158,12 +167,15 @@ class TranscriptAssembly:
 
     def assemble(self):
         """Run StringTie to assemble transcripts."""
+        from src.utils import resolve_executable
+
+        stringtie_bin = resolve_executable(None, 'stringtie', env_var='UPROTEINS_STRINGTIE')
         path = pathlib.Path('StringTie/gtf_intermediates')
         path.mkdir(exist_ok=True, parents=True)
         files = os.listdir("HISAT/bam")
         for file in files:
             cmd_str = [
-                'stringtie',
+                str(stringtie_bin),
                 f'HISAT/bam/{file}',
                 '-o', f'StringTie/gtf_intermediates/{file[:-3]}gtf',
                 '-G', str(self.gtf),
@@ -192,8 +204,11 @@ class TranscriptAssembly:
         return self
 
     def merge_transcripts(self):
+        from src.utils import resolve_executable
+
+        stringtie_bin = resolve_executable(None, 'stringtie', env_var='UPROTEINS_STRINGTIE')
         cmd_str = [
-            'stringtie',
+            str(stringtie_bin),
             '--merge',
             'StringTie/gtf_list.txt',
             '-o', 'assembled.gtf',
@@ -217,10 +232,22 @@ class TranscriptAssembly:
 
 class CompareTranscripts:
     def __init__(self, args, assembled_gtf):
+        from src.utils import resolve_executable
+
         self.assembled_gtf = assembled_gtf
         self.args = args
-        self.gffcompare_path = self.args.gffcompare_path
-        self.gffread_path = self.args.gffread_path
+        self.gffcompare_path = resolve_executable(
+            getattr(self.args, 'gffcompare_path', None),
+            'gffcompare',
+            env_var='UPROTEINS_GFFCOMPARE',
+            cli_flag='--gffcompare_path',
+        )
+        self.gffread_path = resolve_executable(
+            getattr(self.args, 'gffread_path', None),
+            'gffread',
+            env_var='UPROTEINS_GFFREAD',
+            cli_flag='--gffread_path',
+        )
         self.copy_genome()
         self.index_genome()
 
@@ -228,7 +255,10 @@ class CompareTranscripts:
         shutil.copy(self.args.genome, './genome.fasta')
 
     def index_genome(self):
-        cmd_sam = ['samtools', 'faidx', 'genome.fasta']
+        from src.utils import resolve_executable
+
+        samtools_bin = resolve_executable(None, 'samtools', env_var='UPROTEINS_SAMTOOLS')
+        cmd_sam = [str(samtools_bin), 'faidx', 'genome.fasta']
         result = subprocess.run(cmd_sam)
         if (code := result.returncode) != 0:
             err = f'samtools faidx finished with non-zero status code: {code}'

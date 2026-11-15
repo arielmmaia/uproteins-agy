@@ -18,9 +18,9 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-import os
-import sys
 from Bio import SeqIO
+
+from .utils import REPO_ROOT, ensure_dir
 
 
 class Decoy(object):
@@ -30,12 +30,10 @@ class Decoy(object):
         self.reversed = []
         self.type = db_type
         self.__create_dir()
-        self.path = sys.path[0]
+        self.path = str(REPO_ROOT)
 
     def __create_dir(self):
-        if not os.path.exists(f"{self.type}/Percolator"):
-            cmd_dir = f'mkdir {self.type}/Percolator'
-            os.system(cmd_dir)
+        ensure_dir(f"{self.type}/Percolator")
 
     def __get_seqs(self):
         seqs = []
@@ -60,7 +58,7 @@ class Decoy(object):
 
     def add_contaminants(self):
         seqs = []
-        records = SeqIO.parse(f'{self.path}/seqlib/contaminants.txt', 'fasta')
+        records = SeqIO.parse(REPO_ROOT / 'seqlib' / 'contaminants.txt', 'fasta')
         for record in records:
             seqs.append(f">{record.id}\n{record.seq}\n")
         return seqs
