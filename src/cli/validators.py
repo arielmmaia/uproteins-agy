@@ -66,6 +66,18 @@ def validate_assembly(
             'not allowed with arguments --reads1 and --reads2'
         )
 
+    if args.strandness is not None:
+        if single_present and args.strandness not in ('F', 'R'):
+            parser.error(
+                "argument --strandness/-L: single-end reads (--single) "
+                f"require 'F' or 'R', got '{args.strandness}'"
+            )
+        if not single_present and args.strandness not in ('FR', 'RF'):
+            parser.error(
+                "argument --strandness/-L: paired-end reads (--reads1/--reads2) "
+                f"require 'FR' or 'RF', got '{args.strandness}'"
+            )
+
 
 def validate_database(
     args: argparse.Namespace,
