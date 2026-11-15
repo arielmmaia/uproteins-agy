@@ -534,6 +534,13 @@ _postms_parser.add_argument(
     action="store_true",
     default=False,
 )
+_postms_parser.add_argument(
+    "--start_selection",
+    choices=("upstream", "proximal"),
+    default="upstream",
+    help="Tie-breaking rule among start codons with equal peptide coverage, RBS status, and ATG priority "
+    "(default: 'upstream' = longest valid smORF <= maxsize; 'proximal' = shortest valid smORF).",
+)
 
 # =============
 # VALIDATE MODE
