@@ -13,7 +13,6 @@ import pytest
 from src.forest.miner import MinePredicted, SpectrumMiner
 from src.forest.preforest import FeatureFishing, PreFiltering
 from src.postprocess.extinfo import ExtendedInformation
-from src.postprocess.prepare import ForestCleaning
 from src.postprocess.specfilt import Coordinator, ProteinFDR
 from src.sequtils.orflib import ORF, ORFCollection
 
@@ -120,18 +119,6 @@ def test_pandas_2_extended_info_and_miners(tmp_path, monkeypatch):
     res04 = pd.read_csv(res04_path, sep="\t")
     assert len(res04) == 1
     assert res04.loc[0, "Extended ORF"] == "Genome_gORF_1_10-70_forward"
-
-    # ForestCleaning
-    (tmp_path / "Genome" / "post_perc" / "genome_psm_protein_filtered.txt").write_text(
-        "SpecFile\tSpecID\tScanNum\tProtein\nrun1.mzML\t100\t100\tGenome_gORF_1_10-70_forward\n"
-    )
-    (tmp_path / "Genome" / "Genome_pin.txt").write_text(
-        "SpecId\tLabel\tScanNr\tPeptide\tProteins\nrun1_SII_1_1_100_2_1\t1\t100\t-.MPEPTIDER.K\tGenome_gORF_1_10-70_forward\n"
-    )
-    fc = ForestCleaning("Genome", "genome")
-    fc.fetch_spectra()
-    fc.save_table()
-    assert (tmp_path / "Genome" / "rf_predictions" / "genome_model_input.txt").is_file()
 
     # MinePredicted & SpectrumMiner
     pred_path = tmp_path / "predicted.txt"

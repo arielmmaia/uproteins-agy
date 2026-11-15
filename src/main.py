@@ -32,7 +32,6 @@ from src.assembly import TranscriptAssembly, CompareTranscripts, ReadMapper
 from src.master import Archives
 from src.database import Database
 from src.postprocess import ResultsSummarizer
-from src.testing import PipelineTesting
 from src.pipelines import PostMSPipeline, ValidatePipeline
 from src.sequtils.__helpers import ExternalAssemblyError
 from src.metrics import Metrics
@@ -92,10 +91,6 @@ def run_workflow(
             arxivs.comparisonsDirectory = compare_dir
             sequences = comparisons.extract_sequences()
             arxivs.RNASequences = sequences
-
-    elif mode == "testing":
-        testing = PipelineTesting(args)
-        testing.run()
 
     elif mode == "database":
         validators.validate_database(args, subparser)
