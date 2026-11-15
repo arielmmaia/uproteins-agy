@@ -40,6 +40,30 @@ class ReadError(Error):
         super().__init__(self.message)
 
 
+def hisat2_strand_args(strandness: str | None) -> list[str]:
+    """Return HISAT2 strand-specificity CLI arguments ([] when unstranded)."""
+    if strandness is None:
+        return []
+    if strandness in ("RF", "FR", "R", "F"):
+        return ["--rna-strandness", strandness]
+    raise ValueError(f"Unsupported HISAT2 strandness value: {strandness!r}")
+
+
+def stringtie_strand_args(strandness: str | None) -> list[str]:
+    """Return StringTie strand-specificity CLI arguments ([] when unstranded).
+
+    Both paired-end first-strand ('RF') and single-end first-strand/dUTP ('R')
+    use StringTie's '--rf'; both 'FR' and 'F' use '--fr'.
+    """
+    if strandness is None:
+        return []
+    if strandness in ("RF", "R"):
+        return ["--rf"]
+    if strandness in ("FR", "F"):
+        return ["--fr"]
+    raise ValueError(f"Unsupported StringTie strandness value: {strandness!r}")
+
+
 class ReadMapper:
     def __init__(self, args):
         self.args = args
@@ -86,11 +110,9 @@ class ReadMapper:
                 str(hisat2_bin),
                 '-x', 'genome',
                 '--dta',
-                '-S', f'HISAT/sam/{read_name}.sam'
+                '-S', f'HISAT/sam/{read_name}.sam',
+                *hisat2_strand_args(self.strandness),
             ]
-
-            if self.strandness is not None:
-                cmd_hisat.extend(['--rna-strandness', self.strandness])
 
             hisat_input = ['-U', str(read_data)]
             if self.is_paired:
@@ -155,15 +177,11 @@ class TranscriptAssembly:
         self.args = args
         self.threads = args.threads
         self.gtf = self.args.gtf
-        self.strandness = self._check_strand()
+        self.strand_args = stringtie_strand_args(self.args.strandness)
+        self.strandness = self.strand_args[0] if self.strand_args else None
 
     def _check_strand(self):
-        if self.args.strandness == "RF":
-            # or `self.args.strandness == 'R'`?
-            return "--rf"
-        elif self.args.strandness == "FR" or self.args.strandness == 'F':
-            return "--fr"
-        return ''
+        return self.strand_args[0] if self.strand_args else None
 
     def assemble(self):
         """Run StringTie to assemble transcripts."""
@@ -172,17 +190,17 @@ class TranscriptAssembly:
         stringtie_bin = resolve_executable(None, 'stringtie', env_var='UPROTEINS_STRINGTIE')
         path = pathlib.Path('StringTie/gtf_intermediates')
         path.mkdir(exist_ok=True, parents=True)
-        files = os.listdir("HISAT/bam")
+        files = sorted(os.listdir("HISAT/bam"))
         for file in files:
             cmd_str = [
                 str(stringtie_bin),
                 f'HISAT/bam/{file}',
                 '-o', f'StringTie/gtf_intermediates/{file[:-3]}gtf',
                 '-G', str(self.gtf),
-                self.strandness,
+                *self.strand_args,
                 '-l', 'uproteins',
                 '-m', '30',
-                '-A', 'StringTie/gene_abundances.txt'
+                '-A', 'StringTie/gene_abundances.txt',
             ]
             if self.threads is not None:
                 cmd_str.extend(['-p', str(self.threads)])
