@@ -229,6 +229,31 @@ def normalize_pin_spec_id(spec_id: str) -> tuple[str, str]:
     return norm, norm
 
 
+def parse_percolator_psmid(psm_id: str) -> tuple[str, int, int, int]:
+    """Parse a Percolator / `msgf2pin` `PSMId` into `(spec_stem, scan_num, charge, rank)`.
+
+    Handles all three `msgf2pin` formats safely (even when sample names contain `'SII'`
+    or underscores):
+      - `{spec_stem}_SII_{sii_idx}_{sii_rank}_{ScanNum}_{Charge}_{Rank}`
+      - `{spec_stem}_{target|decoy}_SII_{sii_idx}_{sii_rank}_{ScanNum}_{Charge}_{Rank}`
+      - `{spec_stem}_{ScanNum}_{Charge}_{Rank}` (modern 3-suffix `msgf2pin`)
+    """
+    norm_id, _ = normalize_pin_spec_id(str(psm_id).strip())
+    parts = norm_id.rsplit("_", 3)
+    if len(parts) < 4:
+        raise ValueError(f"Malformed Percolator PSMId: {psm_id!r}")
+    scan_num = int(parts[-3])
+    charge = int(parts[-2])
+    rank = int(parts[-1])
+
+    sii_pos = norm_id.rfind("_SII_")
+    if sii_pos != -1:
+        spec_stem = norm_id[:sii_pos]
+    else:
+        spec_stem = parts[0]
+    return spec_stem, scan_num, charge, rank
+
+
 def _tiebreak_digest(seed: int, run_stem: str, scan_nr: str, label: int) -> bytes:
     payload = f"{seed}:{run_stem}:{scan_nr}:{label}".encode("utf-8")
     return hashlib.blake2b(payload, digest_size=8).digest()
@@ -423,7 +448,8 @@ class PercolatorProcessing(object):
         return self
 
     def percolate(self):
-        """Run Percolator on the competed PIN table with aligned enzyme and TDC."""
+        """Run Percolator on the competed PIN table with aligned enzyme, TDC, and
+        explicit decoy PSM/peptide outputs required for subgroup FDR calculation."""
         perc_bin = resolve_executable(
             getattr(self.args, "percolator_path", None),
             "percolator",
@@ -439,7 +465,9 @@ class PercolatorProcessing(object):
             "-w", f"{folder}/feature_weights.txt",
             "-v", "3",
             "-r", f"{folder}/{self.filetype}_pep_results.txt",
+            "--decoy-results-peptides", f"{folder}/{self.filetype}_decoy_pep_results.txt",
             "-m", f"{folder}/{self.filetype}_results_psm.txt",
+            "--decoy-results-psms", f"{folder}/{self.filetype}_decoy_results_psm.txt",
             "--search-input", "concatenated",
             "--results-proteins", f"{folder}/{self.filetype}_protein_results.txt",
             "--protein-enzyme", str(perc_enz),

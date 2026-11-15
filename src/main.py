@@ -139,15 +139,25 @@ def run_workflow(
             transcriptome_decoy_search.peptide_identification()
 
     elif mode == "postms":
-        """ newest method """
         validators.validate_postms(args, subparser)
 
-        genome = PostMSPipeline(args=args, filetype='genome', folder='Genome')
+        genome = PostMSPipeline(
+            args=args,
+            filetype='genome',
+            folder='Genome',
+            qvalue=args.qvalue,
+            pep=args.pep,
+        )
         genome.run()
         if args.transcriptome:
-            transcriptome = PostMSPipeline(args=args, filetype='transcriptome', folder='Transcriptome')
+            transcriptome = PostMSPipeline(
+                args=args,
+                filetype='transcriptome',
+                folder='Transcriptome',
+                qvalue=args.qvalue,
+                pep=args.pep,
+            )
             transcriptome.run()
-        """ new method """
 
     elif mode == "validate":
         validation = ValidatePipeline(args=args)
