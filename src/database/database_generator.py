@@ -18,18 +18,82 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
+import pathlib
+import typing as t
+
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
-from ..utils import concat_files
+from ..utils import REPO_ROOT, concat_files
+
+
+DEFAULT_CONTAMINANTS_PATH = REPO_ROOT / "seqlib" / "contaminants.txt"
+
+
+def load_forward_contaminants(
+    contaminants_path: t.Optional[t.Union[str, pathlib.Path]] = None,
+) -> list[SeqRecord]:
+    """Load only the 121 forward real contaminant entries (`>contaminant_...`) from seqlib/contaminants.txt,
+    discarding pre-baked `>Reverse_contaminant_...` entries while keeping headers and B/X/Z residues intact."""
+    path = pathlib.Path(contaminants_path) if contaminants_path is not None else DEFAULT_CONTAMINANTS_PATH
+    if not path.is_file():
+        return []
+
+    forward_records: list[SeqRecord] = []
+    for record in SeqIO.parse(str(path), "fasta"):
+        rec_id = str(record.id)
+        if rec_id.startswith("Reverse_") or rec_id.lower().startswith("reverse_"):
+            continue
+        if not rec_id.startswith("contaminant_"):
+            rec_id = f"contaminant_{rec_id}"
+
+        desc_tokens = record.description.split()
+        while desc_tokens and desc_tokens[0] in (record.id, rec_id):
+            desc_tokens.pop(0)
+        extra_desc = " ".join(desc_tokens)
+
+        clean_seq = "".join(str(record.seq).split()).rstrip("*").upper()
+        if not clean_seq:
+            continue
+
+        forward_records.append(
+            SeqRecord(
+                Seq(clean_seq),
+                id=rec_id,
+                name=rec_id,
+                description=extra_desc,
+            )
+        )
+    return forward_records
+
+
+def write_forward_contaminants_fasta(
+    output_path: t.Union[str, pathlib.Path] = "contaminants_forward.fasta",
+    contaminants_path: t.Optional[t.Union[str, pathlib.Path]] = None,
+) -> pathlib.Path:
+    out = pathlib.Path(output_path)
+    records = load_forward_contaminants(contaminants_path=contaminants_path)
+    with out.open("w", encoding="utf-8") as handle:
+        for rec in records:
+            SeqIO.write(rec, handle, "fasta")
+    return out
 
 
 class Database(object):
-    def __init__(self, ob, p, filetype):
+    def __init__(
+        self,
+        ob,
+        p,
+        filetype,
+        include_contaminants: bool = True,
+        contaminants_path: t.Optional[t.Union[str, pathlib.Path]] = None,
+    ):
         self.orf_to_blast = ob
         self.proteome = p
         self.filetype = filetype
+        self.include_contaminants = bool(include_contaminants)
+        self.contaminants_path = contaminants_path
         self.annotated = 'annotated.fasta'
 
     def mark_annotated(self):
@@ -55,7 +119,16 @@ class Database(object):
         self.annotated = 'annotated.fasta'
 
     def unify(self):
+        sources: list[t.Union[str, pathlib.Path]] = [self.orf_to_blast, self.annotated]
+        if self.include_contaminants:
+            contam_fa = write_forward_contaminants_fasta(
+                output_path="contaminants_forward.fasta",
+                contaminants_path=self.contaminants_path,
+            )
+            if contam_fa.stat().st_size > 0:
+                sources.append(contam_fa)
+
         concat_files(
-            [self.orf_to_blast, self.annotated],
+            sources,
             f'{self.filetype}_database.fasta',
         )
