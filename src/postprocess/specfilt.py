@@ -35,7 +35,7 @@ from ..utils import concat_files, ensure_dir
 _FLANKING_RE = re.compile(r"^[A-Za-z\-]\.(.*)\.[A-Za-z\-]$")
 _MOD_BRACKET_RE = re.compile(r"\[[^\]]*\]|\([^)]*\)")
 _NON_AA_RE = re.compile(r"[^A-Za-z]")
-_PROTEIN_SPLIT_RE = re.compile(r"[,;\t]+")
+_PROTEIN_SPLIT_RE = re.compile(r"[;\t]+|,(?![^()]*\))")
 
 
 def strip_psm_peptide(raw_peptide: str) -> str:

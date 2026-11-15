@@ -26,46 +26,52 @@ from matplotlib_venn import venn2
 class SequenceFinder(object):
     def __init__(self, df, fasta_db):
         self.df = pd.read_csv(df, sep="\t")
-        self.df = self.df[self.df["Protein"].str.contains("contaminant", regex=False) == False]
-        self.df = self.df[self.df["Protein"].str.contains("lcl|", regex=False) == False]
-        self.df = self.df[self.df["Protein"].str.contains("decoy", regex=False) == False]
-        self.df = self.df[self.df["Protein"].str.contains("sp|", regex=False) == False]
-        self.proteins = self.df["Protein"].tolist()
+        if not self.df.empty and "Protein" in self.df.columns:
+            prot_s = self.df["Protein"].fillna("").astype(str)
+            self.df = self.df[
+                ~prot_s.str.contains("contaminant", case=False, regex=False, na=False)
+                & ~prot_s.str.contains("lcl|", case=False, regex=False, na=False)
+                & ~prot_s.str.contains("decoy_", case=False, regex=False, na=False)
+                & ~prot_s.str.contains("reverse_", case=False, regex=False, na=False)
+                & ~prot_s.str.contains("sp|", case=False, regex=False, na=False)
+            ].copy()
+        self.proteins = (
+            self.df["Protein"].tolist() if "Protein" in self.df.columns else []
+        )
         self.fasta = fasta_db
         self.proteinDict = self.__get_db_proteins()
 
     def __get_db_proteins(self):
         protein_dict = {}
-        records = SeqIO.parse(self.fasta, 'fasta')
-        for record in records:
-            if record.description not in protein_dict:
-                protein_dict[record.description.split(" ")[0]] = record.seq
+        for record in SeqIO.parse(self.fasta, "fasta"):
+            key = record.description.split(" ")[0]
+            if key not in protein_dict:
+                protein_dict[key] = str(record.seq)
         return protein_dict
 
     def df_proteins(self):
+        import re
+
         protein_list = []
-        for i in self.proteins:
-            protein_set = i.split(";")
-            seq_set = ""
+        for raw_entry in self.proteins:
+            protein_set = re.split(r"[;\t]+|,(?![^()]*\))", str(raw_entry))
+            seqs: list[str] = []
             for protein in protein_set:
-                if 'decoy' not in protein:
-                    # print(protein)
-                    # if ')' not in protein:
-                    pos = protein.rfind("(pre")
-                    fixed = protein[:pos]
-                    # fixed = protein
-                    seq = self.proteinDict[fixed]
-                    # print(seq)
-                    if len(seq_set) > 0:
-                        seq_set += f",{seq}"
-                    else:
-                        seq_set += seq
-            protein_list.append(seq_set)
+                tok = protein.strip()
+                if not tok:
+                    continue
+                fixed = tok.split("(")[0].strip()
+                low = fixed.lower()
+                if low.startswith(("decoy_", "reverse_", "contaminant_")):
+                    continue
+                if fixed in self.proteinDict:
+                    seqs.append(str(self.proteinDict[fixed]))
+            protein_list.append(",".join(seqs))
         self.df.insert(5, "ORF Sequence", protein_list)
         return self
 
     def save(self, output):
-        self.df.to_csv(f'{output}.tsv', sep='\t', index=False)
+        self.df.to_csv(f"{output}.tsv", sep="\t", index=False)
         return self
 
 

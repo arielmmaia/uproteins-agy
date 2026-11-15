@@ -23,6 +23,7 @@ import re
 import shutil
 
 from ..utils import ensure_dir, resolve_executable, run_cmd
+from ..utils.psmid import normalize_pin_spec_id, parse_percolator_psmid
 
 
 # MS-GF+ `-e` integer codes (0..9) -> msgf2pin `-e` and percolator `--protein-enzyme`
@@ -208,50 +209,6 @@ def resolve_enzyme_pair(
             )
 
     return "trypsin", "trypsin"
-
-
-def normalize_pin_spec_id(spec_id: str) -> tuple[str, str]:
-    """Strip `_target` / `_decoy` search-role suffixes from a PIN `SpecId` and
-    return `(normalized_spec_id, run_stem)` so target and decoy hypotheses for the
-    same MS2 scan share the exact same spectrum run stem."""
-    norm = _ROLE_BEFORE_SII_RE.sub("", spec_id, count=1)
-    if norm == spec_id:
-        norm = _ROLE_BEFORE_SCAN_RE.sub("", spec_id, count=1)
-
-    sii_idx = norm.rfind("_SII_")
-    if sii_idx != -1:
-        return norm, norm[:sii_idx]
-
-    parts = norm.rsplit("_", 3)
-    if len(parts) == 4 and parts[1].isdigit() and parts[2].isdigit():
-        return norm, parts[0]
-
-    return norm, norm
-
-
-def parse_percolator_psmid(psm_id: str) -> tuple[str, int, int, int]:
-    """Parse a Percolator / `msgf2pin` `PSMId` into `(spec_stem, scan_num, charge, rank)`.
-
-    Handles all three `msgf2pin` formats safely (even when sample names contain `'SII'`
-    or underscores):
-      - `{spec_stem}_SII_{sii_idx}_{sii_rank}_{ScanNum}_{Charge}_{Rank}`
-      - `{spec_stem}_{target|decoy}_SII_{sii_idx}_{sii_rank}_{ScanNum}_{Charge}_{Rank}`
-      - `{spec_stem}_{ScanNum}_{Charge}_{Rank}` (modern 3-suffix `msgf2pin`)
-    """
-    norm_id, _ = normalize_pin_spec_id(str(psm_id).strip())
-    parts = norm_id.rsplit("_", 3)
-    if len(parts) < 4:
-        raise ValueError(f"Malformed Percolator PSMId: {psm_id!r}")
-    scan_num = int(parts[-3])
-    charge = int(parts[-2])
-    rank = int(parts[-1])
-
-    sii_pos = norm_id.rfind("_SII_")
-    if sii_pos != -1:
-        spec_stem = norm_id[:sii_pos]
-    else:
-        spec_stem = parts[0]
-    return spec_stem, scan_num, charge, rank
 
 
 def _tiebreak_digest(seed: int, run_stem: str, scan_nr: str, label: int) -> bytes:
