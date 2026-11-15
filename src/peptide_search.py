@@ -17,11 +17,35 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-import os
 import pathlib
 import shutil
 
 from .utils import REPO_ROOT, build_msgf_search_cmd, ensure_dir, run_cmd
+
+
+SPECTRUM_EXTENSIONS: tuple[str, ...] = (".mzml", ".mzxml", ".mgf")
+
+# Explicit allowlist mapping uProteInS parser attribute names -> MS-GF+ CLI flags
+MSGF_PARAM_MAP: tuple[tuple[str, str], ...] = (
+    ("t", "-t"),
+    ("ti", "-ti"),
+    ("thread", "-thread"),
+    ("tasks", "-tasks"),
+    ("m", "-m"),
+    ("inst", "-inst"),
+    ("e", "-e"),
+    ("protocol", "-protocol"),
+    ("ntt", "-ntt"),
+    ("mod", "-mod"),
+    ("minLength", "-minLength"),
+    ("maxLength", "-maxLength"),
+    ("minCharge", "-minCharge"),
+    ("maxCharge", "-maxCharge"),
+    ("n", "-n"),
+    ("ccm", "-ccm"),
+    ("maxMissedCleavages", "-maxMissedCleavages"),
+    ("numMods", "-numMods"),
+)
 
 
 class PeptideSearch(object):
@@ -31,64 +55,77 @@ class PeptideSearch(object):
         self.orf_file = pathlib.Path(orf_file)
         self.args = args
         self.path = str(REPO_ROOT)
-        self.decoy = decoy
+        self.decoy = bool(decoy)
+        self._staged_db_path: pathlib.Path | None = None
+
+    def _stage_database(self) -> pathlib.Path:
+        """Stage the FASTA inside {database_type}/db_index/ so MS-GF+ suffix-array
+        index files (.cseq, .cnlcp, .csarr, .canno) are kept inside --outdir and
+        never pollute --Mass_spec."""
+        db_dir = ensure_dir(self.database_type)
+        index_dir = ensure_dir(db_dir / "db_index")
+        orf_src = self.orf_file.resolve()
+        staged = (index_dir / self.orf_file.name).resolve()
+        if orf_src != staged:
+            shutil.copy2(orf_src, staged)
+        self._staged_db_path = staged
+        return staged
+
+    def discover_spectrum_files(self) -> list[str]:
+        """Return sorted spectrum filenames (.mzML, .mzXML, .mgf, case-insensitive)."""
+        return sorted(
+            entry.name
+            for entry in self.ms_files_folder.iterdir()
+            if entry.is_file() and entry.name.lower().endswith(SPECTRUM_EXTENSIONS)
+        )
 
     def peptide_identification(self):
         print("\nPerforming peptide search using %s database\n" % self.database_type)
-        db_dir = ensure_dir(self.database_type)
-        orf_src = self.orf_file.resolve()
-        orf_dst = (db_dir / self.orf_file.name).resolve()
-        if orf_src != orf_dst:
-            shutil.copy2(orf_src, orf_dst)
-        ms_db_dst = (self.ms_files_folder / self.orf_file.name).resolve()
-        if orf_src != ms_db_dst:
-            shutil.copy2(orf_src, ms_db_dst)
-
+        ensure_dir(self.database_type)
+        self._stage_database()
         self.loop_search()
-        for mzid_file in sorted(self.ms_files_folder.glob("*.mzid")):
-            shutil.move(str(mzid_file), str(db_dir / mzid_file.name))
+        return self
 
     def loop_search(self):
-        files = sorted(
-            entry.name
-            for entry in self.ms_files_folder.iterdir()
-            if entry.is_file() and entry.name.endswith('mzML')
-        )
-        for file in files:
+        for file in self.discover_spectrum_files():
             self.run_msgf(file)
         return self
 
-    def run_msgf(self, file):
-        self._check_folder()
+    def build_msgf_args(self, file: str) -> list[str]:
+        db_dir = ensure_dir(self.database_type)
+        staged_db = self._staged_db_path or self._stage_database()
+        stem = pathlib.Path(file).stem
+        role_suffix = "decoy" if self.decoy else "target"
+        out_mzid = (db_dir / f"{stem}_{role_suffix}.mzid").resolve()
+
         msgf_args = [
-            '-d', str(self.orf_file.resolve()),
-            '-tda', '0',
-            '-s', str(self.ms_files_folder / file),
-            '-addFeatures', '1',
+            "-d", str(staged_db),
+            "-tda", "0",
+            "-s", str((self.ms_files_folder / file).resolve()),
+            "-o", str(out_mzid),
+            "-addFeatures", "1",
         ]
-        if self.decoy:
-            msgf_args.extend(['-o', str(self.ms_files_folder / f'{file}_decoy.mzid')])
 
-        excluded = {
-            None, "mass_spec", "outdir", "transcriptome", "mode", "msgf_jar",
-            "skip_assembly", "skip_db", "skip_ms", "skip_postms",
-            "skip_validation", "gtf", "single", "reads1", "reads2",
-            "strandness", "gffcompare_path", "gffread_path", "genome",
-            "proteome", "minsize", "maxsize", "starts", "stops", "threads",
-        }
-        for key, value in vars(self.args).items():
-            if key not in excluded and value is not None:
-                msgf_args.extend([f'-{key}', str(value)])
+        for attr_name, cli_flag in MSGF_PARAM_MAP:
+            val = getattr(self.args, attr_name, None)
+            if val is not None:
+                msgf_args.extend([cli_flag, str(val)])
 
+        return msgf_args
+
+    def run_msgf(self, file: str):
+        self._check_folder()
+        msgf_args = self.build_msgf_args(file)
+        java_mem = getattr(self.args, "java_mem", None) or "8G"
         cmd = build_msgf_search_cmd(
             msgf_args,
-            msgf_jar=getattr(self.args, 'msgf_jar', None),
+            msgf_jar=getattr(self.args, "msgf_jar", None),
+            java_mem=java_mem,
         )
         run_cmd(cmd)
         return self
 
     def _check_folder(self):
-        ensure_dir('mzid/Genome')
-        if getattr(self.args, 'transcriptome', False):
-            ensure_dir('mzid/Transcriptome')
-
+        ensure_dir("mzid/Genome")
+        if getattr(self.args, "transcriptome", False):
+            ensure_dir("mzid/Transcriptome")
