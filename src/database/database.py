@@ -17,8 +17,10 @@
 # uProteInS. If not, see <https://www.gnu.org/licenses/>.
 
 
-from ..sequtils import TranscriptomeTranslator, GenomeTranslator, ORFCollection, DatabaseGenerator
-from Bio import SeqIO
+import pathlib
+
+from ..sequtils import TranscriptomeTranslator, GenomeTranslator, DatabaseGenerator
+from .proteome_matcher import CanonicalProteomeMatcher
 
 
 class Database(object):
@@ -27,17 +29,24 @@ class Database(object):
         self.genome = args.genome
 
     def translate(self):
-        import pathlib
-
         circular = getattr(self.args, "circular", True)
         genetic_code = getattr(self.args, "genetic_code", 11)
+        minsize = int(self.args.minsize)
+        maxsize = int(self.args.maxsize)
+        proteome_path = getattr(self.args, "proteome", None)
+        matcher = CanonicalProteomeMatcher(
+            proteome_fasta=proteome_path,
+            max_orf_aa=max(1, maxsize // 3),
+            min_orf_aa=max(1, minsize // 3),
+        )
+
         if self.args.transcriptome:
             gtf_candidate = pathlib.Path("assembled.gtf")
             rna = TranscriptomeTranslator(
                 sequence="HISAT/transcripts.fasta",
                 form='fasta',
-                minsize=int(self.args.minsize),
-                maxsize=int(self.args.maxsize),
+                minsize=minsize,
+                maxsize=maxsize,
                 circular=False,
                 genetic_code=genetic_code,
                 gtf_path=gtf_candidate if gtf_candidate.is_file() else None,
@@ -48,15 +57,21 @@ class Database(object):
                 seqtype='aa',
                 entry='full',
             )
+            tx_lengths = {
+                idx + 1: len(seq)
+                for idx, seq in enumerate(rna.seqsToTranslate)
+            }
+            rna_orfs = matcher.filter_orfs(rna_orfs, contig_lengths=tx_lengths)
 
             db = DatabaseGenerator(name="transcriptome", db_type="sql")
             db.add_orfs(rna_orfs)
             db.to_fasta(filename="transcriptome_ORFs.fasta", identifier='t')
+
         dna = GenomeTranslator(
             sequence=self.args.genome,
             form='fasta',
-            minsize=int(self.args.minsize),
-            maxsize=int(self.args.maxsize),
+            minsize=minsize,
+            maxsize=maxsize,
             circular=circular,
             genetic_code=genetic_code,
         )
@@ -66,6 +81,12 @@ class Database(object):
             seqtype='aa',
             entry='full',
         )
+        contig_lengths = {
+            idx + 1: len(seq)
+            for idx, seq in enumerate(dna.seqsToTranslate)
+        }
+        dna_orfs = matcher.filter_orfs(dna_orfs, contig_lengths=contig_lengths)
+
         genome_db = DatabaseGenerator(name="genome", db_type="sql")
         genome_db.add_orfs(dna_orfs)
         genome_db.to_fasta(filename="genome_ORFs.fasta", identifier='g')
