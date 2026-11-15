@@ -369,6 +369,12 @@ _ms_parser.add_argument(
     help="Maximum number of dynamic (variable) modifications per peptide; "
     "Default: 3"
 )
+_ms_parser.add_argument(
+    "--java_mem",
+    type=_types.Memory,
+    default="8G",
+    help="Maximum JVM heap size passed as -Xmx to MS-GF+ (e.g. 8G, 16G, 48G)."
+)
 
 # ===========
 # POSTMS MODE
@@ -379,6 +385,12 @@ _postms_parser.add_argument(
     help='Inform output directory',
     type=_types.DirectoryName,
     required=True
+)
+_postms_parser.add_argument(
+    "--java_mem",
+    type=_types.Memory,
+    default="8G",
+    help="Maximum JVM heap size passed as -Xmx to MS-GF+ MzIDToTsv."
 )
 _postms_parser.add_argument(
     "--Mass_spec", "-M",

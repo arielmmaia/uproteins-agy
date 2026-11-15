@@ -200,7 +200,7 @@ def build_msgf_search_cmd(
     msgf_args: t.Sequence[str],
     *,
     msgf_jar: str | os.PathLike[str] | None = None,
-    java_mem: str = "48G",
+    java_mem: str = "8G",
 ) -> list[str]:
     """Construct a safe argv list to invoke MS-GF+ peptide database search."""
     java_bin = resolve_executable(None, "java", env_var="UPROTEINS_JAVA")
@@ -213,12 +213,14 @@ def build_mzid_to_tsv_cmd(
     tsv_path: str | os.PathLike[str],
     *,
     msgf_jar: str | os.PathLike[str] | None = None,
+    java_mem: str = "8G",
 ) -> list[str]:
     """Construct a safe argv list for MS-GF+'s MzIDToTsv converter."""
     java_bin = resolve_executable(None, "java", env_var="UPROTEINS_JAVA")
     jar_path = resolve_msgf_jar(msgf_jar)
     return [
         str(java_bin),
+        f"-Xmx{java_mem}",
         "-cp",
         str(jar_path),
         "edu.ucsd.msjava.ui.MzIDToTsv",
